@@ -1,8 +1,12 @@
 """Routing service using OpenStreetMap/OSRM for waste disposal routing"""
 
 import httpx
+import logging
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,7 +69,7 @@ class RoutingService:
                 response = await client.get(url, params=params)
 
                 if response.status_code != 200:
-                    print(f"OSRM routing failed: {response.status_code}")
+                    logger.warning("OSRM routing failed with status: %d", response.status_code)
                     return None
 
                 data = response.json()
@@ -94,7 +98,7 @@ class RoutingService:
                 )
 
         except Exception as e:
-            print(f"Routing error: {e}")
+            logger.error("Routing error: %s", e)
             return None
 
     @staticmethod
@@ -154,7 +158,7 @@ class RoutingService:
                 return results
 
         except Exception as e:
-            print(f"Distance matrix error: {e}")
+            logger.error("Distance matrix error: %s", e)
             return None
 
     @staticmethod

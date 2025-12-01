@@ -1,12 +1,14 @@
 """Firebase Storage service for image uploads"""
 
 import uuid
-import os
+import logging
 from typing import Optional
-from datetime import datetime, timedelta
 from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class FirebaseStorageService:
@@ -38,7 +40,7 @@ class FirebaseStorageService:
             self.bucket = storage.bucket()
             self._initialized = True
         except Exception as e:
-            print(f"Firebase initialization failed (optional for hackathon): {e}")
+            logger.info("Firebase initialization skipped (optional): %s", e)
             self._initialized = False
 
     def is_available(self) -> bool:
@@ -141,7 +143,7 @@ class FirebaseStorageService:
             blob.delete()
             return True
         except Exception as e:
-            print(f"Failed to delete image: {e}")
+            logger.warning("Failed to delete image: %s", e)
             return False
 
 

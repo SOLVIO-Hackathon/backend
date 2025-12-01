@@ -8,7 +8,8 @@ from sqlalchemy import select, func
 
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user, require_admin
-from app.models.user import User
+from app.core.config import settings
+from app.models.user import User, UserType
 from app.models.payout import Payout, PayoutStatus, PayoutMethod
 from app.models.transaction import Transaction, PaymentStatus
 from app.schemas.payout import (
@@ -129,7 +130,7 @@ async def get_payout(
         )
 
     # Check authorization
-    if payout.user_id != current_user.id and current_user.user_type.value != "admin":
+    if payout.user_id != current_user.id and current_user.user_type != UserType.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this payout"
@@ -231,8 +232,8 @@ async def create_stripe_connect_account(
         # Create account onboarding link
         account_link = stripe.AccountLink.create(
             account=account.id,
-            refresh_url="https://your-app.com/connect/refresh",
-            return_url="https://your-app.com/connect/return",
+            refresh_url=settings.STRIPE_CONNECT_REFRESH_URL,
+            return_url=settings.STRIPE_CONNECT_RETURN_URL,
             type="account_onboarding",
         )
 

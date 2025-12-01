@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str
     STRIPE_PUBLISHABLE_KEY: str
     STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_CONNECT_REFRESH_URL: str = "https://your-app.com/connect/refresh"
+    STRIPE_CONNECT_RETURN_URL: str = "https://your-app.com/connect/return"
 
     # Verification Thresholds
     EXIF_GPS_TOLERANCE_METERS: int

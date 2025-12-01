@@ -54,7 +54,7 @@ async def list_disposal_points(
     session: AsyncSession = Depends(get_async_session),
 ):
     """List all disposal points with optional filters"""
-    query = select(DisposalPoint).where(DisposalPoint.is_active == True)
+    query = select(DisposalPoint).where(DisposalPoint.is_active)
 
     if point_type:
         query = query.where(DisposalPoint.point_type == point_type)
@@ -63,7 +63,7 @@ async def list_disposal_points(
         query = query.where(DisposalPoint.accepted_waste_types.ilike(f"%{waste_type}%"))
 
     # Get total count
-    count_query = select(func.count()).select_from(DisposalPoint).where(DisposalPoint.is_active == True)
+    count_query = select(func.count()).select_from(DisposalPoint).where(DisposalPoint.is_active)
     if point_type:
         count_query = count_query.where(DisposalPoint.point_type == point_type)
     if waste_type:
@@ -111,7 +111,7 @@ async def get_nearby_disposal_points(
             user_point
         ).label('distance')
     ).where(
-        DisposalPoint.is_active == True,
+        DisposalPoint.is_active,
         ST_DWithin(DisposalPoint.location, user_point, radius_meters)
     )
 
