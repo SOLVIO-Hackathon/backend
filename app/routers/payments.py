@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Header, Request, Depends, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_session
 from app.services.stripe_service import StripeService
 from app.schemas.payment import (
     StripePaymentIntentCreate,
@@ -13,7 +13,7 @@ from app.schemas.payment import (
     PublishableKeyResponse,
 )
 from app.models.user import User
-from app.routers.auth import get_current_user
+from app.core.auth import get_current_active_user
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 stripe_service = StripeService()
@@ -32,8 +32,8 @@ async def get_stripe_config():
 @router.post("/create-payment-intent", response_model=StripePaymentIntentResponse)
 async def create_payment_intent(
     payment_data: StripePaymentIntentCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session)
 ):
     """
     Create a Stripe Payment Intent for processing payments
@@ -81,8 +81,8 @@ async def create_payment_intent(
 @router.post("/create-checkout-session", response_model=StripeCheckoutSessionResponse)
 async def create_checkout_session(
     session_data: StripeCheckoutSessionCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session)
 ):
     """
     Create a Stripe Checkout Session for hosted payment page
@@ -129,7 +129,7 @@ async def create_checkout_session(
 async def stripe_webhook(
     request: Request,
     stripe_signature: str = Header(None, alias="stripe-signature"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_session)
 ):
     """
     Stripe webhook endpoint for handling payment events
@@ -218,7 +218,7 @@ async def stripe_webhook(
 @router.get("/payment-intent/{payment_intent_id}")
 async def get_payment_intent(
     payment_intent_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Retrieve a Payment Intent by ID
@@ -252,7 +252,7 @@ async def get_payment_intent(
 @router.post("/cancel-payment-intent/{payment_intent_id}")
 async def cancel_payment_intent(
     payment_intent_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Cancel a Payment Intent
