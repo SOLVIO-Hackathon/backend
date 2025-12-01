@@ -18,7 +18,7 @@ depends_on = None
 
 def upgrade() -> None:
     """Add is_sponsor column to users table"""
-    op.add_column('users', sa.Column('is_sponsor', sa.Boolean(), nullable=False, server_default='false'))
+    op.add_column('users', sa.Column('is_sponsor', sa.Boolean(), nullable=False, server_default=sa.text('false')))
 
 
 def downgrade() -> None:

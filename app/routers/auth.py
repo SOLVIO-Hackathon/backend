@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -124,25 +125,17 @@ async def toggle_sponsor_status(
     return current_user
 
 
-@router.get("/sponsors", response_model=list)
+@router.get("/sponsors", response_model=List[UserResponse])
 async def get_sponsors(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Get list of all sponsors (public endpoint)"""
     result = await session.execute(
         select(User)
-        .where(User.is_sponsor == True)
-        .where(User.is_active == True)
+        .where(User.is_sponsor.is_(True))
+        .where(User.is_active.is_(True))
         .order_by(User.reputation_score.desc())
     )
     sponsors = result.scalars().all()
     
-    return [
-        {
-            "id": str(sponsor.id),
-            "full_name": sponsor.full_name,
-            "user_type": sponsor.user_type.value,
-            "reputation_score": sponsor.reputation_score,
-        }
-        for sponsor in sponsors
-    ]
+    return sponsors

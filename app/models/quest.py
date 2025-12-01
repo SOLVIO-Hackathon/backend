@@ -61,6 +61,7 @@ class Quest(Base):
         Geometry("POINT", srid=4326), nullable=False
     )
     geohash: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    ward_geohash: Mapped[str] = mapped_column(String(5), index=True, nullable=False)  # First 5 chars for ward-level grouping
 
     waste_type: Mapped[WasteType] = mapped_column(SQLEnum(WasteType), nullable=False)
     severity: Mapped[Severity] = mapped_column(SQLEnum(Severity), default=Severity.MEDIUM)

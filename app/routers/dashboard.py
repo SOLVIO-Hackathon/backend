@@ -1,8 +1,10 @@
+from app.models.quest import WasteType
 from typing import List, Optional
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text
-from geoalchemy2.functions import ST_X, ST_Y
+from sqlalchemy import select, func, text, case
+from geoalchemy2.functions import ST_X, ST_Y, ST_GeoHash
 
 from app.core.database import get_async_session
 from app.core.auth import require_admin, get_current_active_user
@@ -94,7 +96,7 @@ async def get_analytics(
 @router.get("/heatmap", response_model=List[HeatmapPoint])
 async def get_heatmap(
     status_filter: Optional[QuestStatus] = None,
-    waste_type: Optional[str] = None,
+    waste_type: Optional[WasteType] = None,
     limit: int = Query(500, ge=1, le=1000),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_async_session),
@@ -145,7 +147,7 @@ async def get_leaderboard(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Get top collectors leaderboard with actual calculations"""
+    """Get top collectors leaderboard based on verified quest completions and reputation score"""
     # Get collectors with aggregated data
     # Using subqueries for better performance
     
@@ -226,28 +228,65 @@ async def get_leaderboard(
 
 @router.get("/ward-stats", response_model=List[WardStats])
 async def get_ward_stats(
-    geohash_prefix: Optional[str] = Query(None, description="Filter by geohash prefix for ward-level filtering"),
+    geohash_prefix: Optional[str] = Query(
+        None,
+        description="Filter by geohash prefix for ward-level filtering",
+        min_length=1,
+        max_length=12,
+        pattern="^[0-9a-z]+$"
+    ),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Get ward-level statistics aggregated by geohash prefix"""
-    # Group quests by geohash prefix (first 5 chars for ward-level)
-    # This provides approximate ward-level grouping
-    geohash_length = 5  # Approximately covers a small area like a ward
+    """
+    Get ward-level statistics using indexed ward_geohash column.
     
+    This endpoint uses the pre-computed ward_geohash column for optimal performance,
+    allowing the database to use indexes instead of computing substring on every row.
+    """
+    # Use the indexed ward_geohash column instead of func.substr
     query = select(
-        func.substr(Quest.geohash, 1, geohash_length).label('ward_geohash'),
+        Quest.ward_geohash,
         func.count(Quest.id).label('total_quests'),
-        func.count(Quest.id).filter(Quest.status == QuestStatus.VERIFIED).label('completed_quests'),
-        func.count(Quest.id).filter(Quest.status.in_([QuestStatus.REPORTED, QuestStatus.ASSIGNED])).label('pending_quests'),
-    ).group_by(func.substr(Quest.geohash, 1, geohash_length))
+        func.sum(case((Quest.status == QuestStatus.VERIFIED, 1), else_=0)).label('completed_quests'),
+        func.sum(case((Quest.status.in_([QuestStatus.REPORTED, QuestStatus.ASSIGNED]), 1), else_=0)).label('pending_quests'),
+    ).group_by(Quest.ward_geohash)
     
     # Apply geohash prefix filter if provided
     if geohash_prefix:
-        query = query.where(Quest.geohash.startswith(geohash_prefix))
+        # Ensure prefix is exactly 5 chars or use LIKE for partial matches
+        if len(geohash_prefix) == 5:
+            query = query.where(Quest.ward_geohash == geohash_prefix)
+        else:
+            # For shorter prefixes, use LIKE which can still use index with prefix matching
+            query = query.where(Quest.ward_geohash.like(f'{geohash_prefix}%'))
     
     result = await session.execute(query)
     rows = result.all()
+    
+    # Calculate total waste per ward from listings
+    # Use ST_GeoHash to compute ward-level geohash for listings and aggregate weight
+    waste_query = select(
+        func.substr(ST_GeoHash(Listing.location), 1, 5).label('listing_ward_geohash'),
+        func.coalesce(func.sum(Listing.weight_kg), 0).label('total_waste_kg')
+    ).where(
+        Listing.status == ListingStatus.COMPLETED,
+        Listing.weight_kg.isnot(None)
+    ).group_by('listing_ward_geohash')
+    
+    # Apply same filter if provided
+    if geohash_prefix:
+        if len(geohash_prefix) == 5:
+            waste_query = waste_query.where(
+                func.substr(ST_GeoHash(Listing.location), 1, 5) == geohash_prefix
+            )
+        else:
+            waste_query = waste_query.where(
+                func.substr(ST_GeoHash(Listing.location), 1, len(geohash_prefix)) == geohash_prefix
+            )
+    
+    waste_result = await session.execute(waste_query)
+    waste_by_ward = {row.listing_ward_geohash: float(row.total_waste_kg) for row in waste_result.all()}
     
     ward_stats = []
     for row in rows:
@@ -258,7 +297,7 @@ async def get_ward_stats(
                 total_quests=row.total_quests,
                 completed_quests=row.completed_quests,
                 pending_quests=row.pending_quests,
-                total_waste_kg=0.0,  # Will be calculated from listings
+                total_waste_kg=waste_by_ward.get(row.ward_geohash, 0.0),
             )
         )
     
@@ -295,9 +334,14 @@ async def get_ewaste_analytics(
             Listing.device_type,
             func.count(Listing.id).label('count')
         )
+        .where(Listing.device_type.isnot(None))
         .group_by(Listing.device_type)
     )
-    device_breakdown = {str(row.device_type.value): row.count for row in device_breakdown_result.all()}
+    device_breakdown = {
+        str(row.device_type.value) if getattr(row.device_type, "value", None) is not None
+        else (str(row.device_type) if row.device_type is not None else "unknown"): row.count
+        for row in device_breakdown_result.all()
+    }
     
     # Total estimated value (sum of min and max averages)
     value_result = await session.execute(
@@ -312,7 +356,7 @@ async def get_ewaste_analytics(
     # Average value per listing
     avg_value_result = await session.execute(
         select(
-            func.coalesce(func.avg((Listing.estimated_value_min + Listing.estimated_value_max) / 2), 0)
+            func.coalesce(func.avg((Listing.estimated_value_min + Listing.estimated_value_max) * 0.5), 0)
         )
     )
     avg_value = float(avg_value_result.scalar() or 0)
@@ -357,16 +401,20 @@ async def get_live_updates(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Get live/real-time updates for dashboard (HTTP polling endpoint)"""
-    from datetime import datetime, timedelta
-    
     # Parse since_timestamp or default to last 5 minutes
+    since = None
     if since_timestamp:
         try:
+            # Parse ISO format timestamp and ensure it's timezone-aware
             since = datetime.fromisoformat(since_timestamp.replace('Z', '+00:00'))
-        except ValueError:
-            since = datetime.utcnow() - timedelta(minutes=5)
-    else:
-        since = datetime.utcnow() - timedelta(minutes=5)
+            # If naive datetime, assume UTC
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            since = None
+    
+    if since is None:
+        since = datetime.now(timezone.utc) - timedelta(minutes=5)
     
     # Get recent quests
     recent_quests_result = await session.execute(
@@ -429,7 +477,7 @@ async def get_live_updates(
     )
     
     return LiveUpdate(
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         recent_quests=recent_quests,
         recent_listings=recent_listings,
         new_quests_count=new_quests_count.scalar() or 0,

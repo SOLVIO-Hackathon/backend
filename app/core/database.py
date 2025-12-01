@@ -39,7 +39,7 @@ SessionLocal = sessionmaker(
 )
 
 
-async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+async def wget_async_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting async database sessions"""
     async with AsyncSessionLocal() as session:
         try:

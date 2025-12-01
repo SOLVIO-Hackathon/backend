@@ -25,6 +25,8 @@ async def create_quest(
     """Create a new CleanQuest (citizen reports waste)"""
     # Calculate geohash
     gh = geohash.encode(quest_data.location.latitude, quest_data.location.longitude, precision=8)
+    # Extract ward-level geohash (first 5 chars)
+    ward_gh = gh[:5]
 
     # Determine bounty based on waste type
     bounty_map = {
@@ -42,6 +44,7 @@ async def create_quest(
         description=quest_data.description,
         location=f"POINT({quest_data.location.longitude} {quest_data.location.latitude})",
         geohash=gh,
+        ward_geohash=ward_gh,
         waste_type=quest_data.waste_type,
         severity=quest_data.severity,
         bounty_points=bounty,
