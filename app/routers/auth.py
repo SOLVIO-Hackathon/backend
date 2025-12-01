@@ -131,8 +131,8 @@ async def get_sponsors(
     """Get list of all sponsors (public endpoint)"""
     result = await session.execute(
         select(User)
-        .where(User.is_sponsor == True)
-        .where(User.is_active == True)
+        .where(User.is_sponsor.is_(True))
+        .where(User.is_active.is_(True))
         .order_by(User.reputation_score.desc())
     )
     sponsors = result.scalars().all()

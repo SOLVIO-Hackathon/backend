@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
@@ -295,6 +296,7 @@ async def get_ewaste_analytics(
             Listing.device_type,
             func.count(Listing.id).label('count')
         )
+        .where(Listing.device_type.isnot(None))
         .group_by(Listing.device_type)
     )
     device_breakdown = {str(row.device_type.value): row.count for row in device_breakdown_result.all()}
@@ -357,15 +359,22 @@ async def get_live_updates(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Get live/real-time updates for dashboard (HTTP polling endpoint)"""
-    from datetime import datetime, timedelta
-    
     # Parse since_timestamp or default to last 5 minutes
+    since = None
     if since_timestamp:
         try:
-            since = datetime.fromisoformat(since_timestamp.replace('Z', '+00:00'))
-        except ValueError:
-            since = datetime.utcnow() - timedelta(minutes=5)
-    else:
+            # Handle various timezone formats
+            ts = since_timestamp.replace('Z', '+00:00')
+            # Remove any existing timezone info for naive datetime
+            if '+' in ts:
+                ts = ts.split('+')[0]
+            elif ts.endswith('Z'):
+                ts = ts[:-1]
+            since = datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            since = None
+    
+    if since is None:
         since = datetime.utcnow() - timedelta(minutes=5)
     
     # Get recent quests
