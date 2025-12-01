@@ -21,6 +21,7 @@ from app.services.ai_service import get_ai_service
 from app.services.qr_service import get_qr_service
 from app.services.routing_service import get_routing_service
 from app.utils.exif_extraction import compare_metadata
+from app.routers.admin_review import auto_flag_low_confidence_quest
 
 router = APIRouter(prefix="/quests", tags=["CleanQuests"])
 
@@ -307,11 +308,37 @@ async def complete_quest(
 
             verification_message = "✅ Quest verified and bounty awarded!"
         else:
-            # Low confidence - flag for admin review
+            # ✅ FEATURE 2: AUTO-FLAG LOW CONFIDENCE FOR ADMIN REVIEW
+            # Low confidence - automatically flag for admin review
+            ai_notes = f"Verification Decision: {verification_result.verification_decision}\n"
+            ai_notes += f"Detailed Analysis: {verification_result.detailed_analysis}\n"
+            if verification_result.fraud_indicators:
+                ai_notes += f"Fraud Indicators: {', '.join(verification_result.fraud_indicators)}"
+
+            admin_review = await auto_flag_low_confidence_quest(
+                quest_id=quest.id,
+                confidence_score=verification_result.confidence_score,
+                ai_notes=ai_notes,
+                session=session
+            )
+
             verification_message = "⚠️ Quest completed but flagged for admin review due to low AI confidence."
 
     except Exception as e:
         quest.verification_notes = f"AI verification failed: {str(e)}"
+
+        # ✅ FEATURE 2: AUTO-FLAG FAILED VERIFICATION FOR ADMIN REVIEW
+        # AI verification failed - flag for manual admin review
+        try:
+            admin_review = await auto_flag_low_confidence_quest(
+                quest_id=quest.id,
+                confidence_score=0.0,  # Set to 0 to indicate failure
+                ai_notes=f"AI verification failed with error: {str(e)}",
+                session=session
+            )
+        except Exception:
+            pass  # If auto-flagging fails, continue without blocking quest completion
+
         verification_message = "⚠️ Quest completed but AI verification failed. Flagged for manual review."
 
     # ✅ FEATURE 4: WASTE DISPOSAL ROUTING
