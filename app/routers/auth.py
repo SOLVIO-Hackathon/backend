@@ -110,3 +110,39 @@ async def update_current_user(
 async def logout():
     """Logout (client should delete token)"""
     return {"message": "Successfully logged out"}
+
+
+@router.patch("/me/sponsor", response_model=UserResponse)
+async def toggle_sponsor_status(
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Toggle sponsor status for current user"""
+    current_user.is_sponsor = not current_user.is_sponsor
+    await session.commit()
+    await session.refresh(current_user)
+    return current_user
+
+
+@router.get("/sponsors", response_model=list)
+async def get_sponsors(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get list of all sponsors (public endpoint)"""
+    result = await session.execute(
+        select(User)
+        .where(User.is_sponsor == True)
+        .where(User.is_active == True)
+        .order_by(User.reputation_score.desc())
+    )
+    sponsors = result.scalars().all()
+    
+    return [
+        {
+            "id": str(sponsor.id),
+            "full_name": sponsor.full_name,
+            "user_type": sponsor.user_type.value,
+            "reputation_score": sponsor.reputation_score,
+        }
+        for sponsor in sponsors
+    ]

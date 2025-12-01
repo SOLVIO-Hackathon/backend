@@ -36,6 +36,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_sponsor: Mapped[bool] = mapped_column(Boolean, default=False)
 
     reputation_score: Mapped[float] = mapped_column(Float, default=0.0)
     total_transactions: Mapped[int] = mapped_column(Integer, default=0)

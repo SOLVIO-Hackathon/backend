@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -60,6 +60,7 @@ class LeaderboardEntry(BaseModel):
 class WardStats(BaseModel):
     """Ward-level statistics"""
     ward_name: str
+    geohash_prefix: Optional[str] = None
     total_quests: int
     completed_quests: int
     pending_quests: int
@@ -69,6 +70,7 @@ class WardStats(BaseModel):
         "json_schema_extra": {
             "example": {
                 "ward_name": "Ward 25 - Dhanmondi",
+                "geohash_prefix": "wh0v9",
                 "total_quests": 150,
                 "completed_quests": 120,
                 "pending_quests": 30,
@@ -136,6 +138,80 @@ class DashboardResponse(BaseModel):
                 "leaderboard": [],
                 "ward_stats": [],
                 "quest_trend": []
+            }
+        }
+    }
+
+
+class EWasteAnalytics(BaseModel):
+    """E-waste analytics with device listings and material value estimates"""
+    total_listings: int
+    active_listings: int
+    completed_listings: int
+    device_type_breakdown: Dict[str, int]
+    total_estimated_value_min: float
+    total_estimated_value_max: float
+    total_realized_value: float
+    average_listing_value: float
+    recent_listings: List[Dict[str, Any]]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "total_listings": 320,
+                "active_listings": 85,
+                "completed_listings": 200,
+                "device_type_breakdown": {
+                    "mobile": 120,
+                    "laptop": 80,
+                    "desktop": 50,
+                    "tablet": 40,
+                    "other": 30
+                },
+                "total_estimated_value_min": 450000.0,
+                "total_estimated_value_max": 680000.0,
+                "total_realized_value": 520000.0,
+                "average_listing_value": 1750.0,
+                "recent_listings": []
+            }
+        }
+    }
+
+
+class LiveUpdate(BaseModel):
+    """Live/real-time updates for dashboard polling"""
+    timestamp: str
+    recent_quests: List[Dict[str, Any]]
+    recent_listings: List[Dict[str, Any]]
+    new_quests_count: int
+    new_listings_count: int
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "timestamp": "2024-12-01T10:30:00",
+                "recent_quests": [
+                    {
+                        "id": "123e4567-e89b-12d3-a456-426614174000",
+                        "title": "Cleanup at Dhanmondi Lake",
+                        "status": "reported",
+                        "waste_type": "recyclable",
+                        "created_at": "2024-12-01T10:25:00",
+                        "updated_at": "2024-12-01T10:30:00"
+                    }
+                ],
+                "recent_listings": [
+                    {
+                        "id": "456e4567-e89b-12d3-a456-426614174000",
+                        "device_name": "iPhone 12",
+                        "status": "listed",
+                        "device_type": "mobile",
+                        "created_at": "2024-12-01T10:20:00",
+                        "updated_at": "2024-12-01T10:25:00"
+                    }
+                ],
+                "new_quests_count": 5,
+                "new_listings_count": 3
             }
         }
     }

@@ -56,6 +56,7 @@ class UserResponse(BaseModel):
     user_type: UserType
     is_active: bool
     is_verified: bool
+    is_sponsor: bool = False
     reputation_score: float
     total_transactions: int
     created_at: datetime
@@ -72,6 +73,7 @@ class UserResponse(BaseModel):
                 "user_type": "citizen",
                 "is_active": True,
                 "is_verified": True,
+                "is_sponsor": False,
                 "reputation_score": 4.5,
                 "total_transactions": 10,
                 "created_at": "2024-01-01T00:00:00",
@@ -87,6 +89,7 @@ class UserPublic(BaseModel):
     full_name: str
     user_type: UserType
     reputation_score: float
+    is_sponsor: bool = False
 
     model_config = {
         "from_attributes": True,
@@ -95,7 +98,8 @@ class UserPublic(BaseModel):
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "full_name": "John Doe",
                 "user_type": "collector",
-                "reputation_score": 4.7
+                "reputation_score": 4.7,
+                "is_sponsor": False
             }
         }
     }
