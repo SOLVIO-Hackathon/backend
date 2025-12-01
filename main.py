@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
+from app.routers import chat, admin_review, disposal, upload, payouts
 
 
 @asynccontextmanager
@@ -59,6 +60,11 @@ api_v1 = FastAPI(
         {"name": "FlashTrade", "description": "E-waste marketplace listings"},
         {"name": "FlashTrade - Bids", "description": "Bidding system for e-waste"},
         {"name": "Payments", "description": "Stripe payment integration"},
+        {"name": "Payouts", "description": "Payout workflow for completed transactions"},
+        {"name": "In-App Chat", "description": "Messaging system with deal confirmation lock"},
+        {"name": "Upload & QR", "description": "Image upload and QR code generation/validation"},
+        {"name": "Waste Disposal Routing", "description": "OpenStreetMap routing to disposal points"},
+        {"name": "Admin Review", "description": "Human-in-the-loop review for flagged quests"},
         {"name": "Dashboard", "description": "Admin dashboard and analytics"},
     ],
     swagger_ui_parameters={
@@ -110,6 +116,11 @@ api_v1.include_router(quests.router)
 api_v1.include_router(listings.router)
 api_v1.include_router(bids.router)
 api_v1.include_router(payments.router)
+api_v1.include_router(payouts.router)
+api_v1.include_router(chat.router)
+api_v1.include_router(upload.router)
+api_v1.include_router(disposal.router)
+api_v1.include_router(admin_review.router)
 api_v1.include_router(dashboard.router)
 
 # Mount v1 API at root level (so /docs works directly)
