@@ -25,8 +25,9 @@ def _get_exif_data(image: Image.Image) -> Dict[str, Any]:
     exif_data = {}
     
     try:
-        raw_exif = image._getexif()
-        if raw_exif is None:
+        # Use getexif() instead of deprecated _getexif()
+        raw_exif = image.getexif()
+        if not raw_exif:
             return exif_data
         
         for tag_id, value in raw_exif.items():
