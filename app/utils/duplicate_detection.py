@@ -4,7 +4,7 @@ Used to detect and prevent duplicate quest reports based on location and time.
 """
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 import pygeohash as geohash
@@ -54,15 +54,21 @@ def get_geohash_neighbors(gh: str) -> dict:
         Dictionary with keys: 'top', 'bottom', 'left', 'right'
     """
     # pygeohash uses 'get_adjacent' function with specific direction names
-    direction_map = {
-        'top': 'top',       # north
-        'bottom': 'bottom', # south
-        'right': 'right',   # east
-        'left': 'left',     # west
-    }
+    # direction_map = {
+    #     'top': 'top',       # north
+    #     'bottom': 'bottom', # south
+    #     'right': 'right',   # east
+    #     'left': 'left',     # west
+    # }
+    # neighbors = {}
+    # for key, direction in direction_map.items():
+    #     neighbors[key] = geohash.get_adjacent(gh, direction)
+    # return neighbors
+
+    directions = ['top', 'bottom', 'right', 'left']
     neighbors = {}
-    for key, direction in direction_map.items():
-        neighbors[key] = geohash.get_adjacent(gh, direction)
+    for direction in directions:
+        neighbors[direction] = geohash.get_adjacent(gh, direction)
     return neighbors
 
 
@@ -133,7 +139,7 @@ def generate_temporal_hash(
     """
     # Normalize timestamp to UTC if it has timezone info
     if timestamp.tzinfo is not None:
-        timestamp = timestamp.replace(tzinfo=None)
+        timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
     
     # Calculate the bucket start time
     total_minutes = int(timestamp.timestamp() / 60)

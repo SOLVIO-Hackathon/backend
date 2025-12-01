@@ -20,10 +20,6 @@ from app.utils.duplicate_detection import (
     is_potential_duplicate,
 )
 from app.utils.exif_extraction import (
-    extract_gps_coordinates,
-    extract_timestamp,
-    extract_device_info,
-    extract_image_metadata,
     extract_metadata_from_bytes,
     compare_metadata,
 )

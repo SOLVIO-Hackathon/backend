@@ -7,6 +7,7 @@ import io
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 from pathlib import Path
+from math import radians, sin, cos, sqrt, atan2
 
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -25,14 +26,17 @@ def _get_exif_data(image: Image.Image) -> Dict[str, Any]:
     exif_data = {}
     
     try:
-        raw_exif = image._getexif()
-        if raw_exif is None:
+        # Use getexif() instead of deprecated _getexif()
+        raw_exif = image.getexif()
+        if not raw_exif:
             return exif_data
         
         for tag_id, value in raw_exif.items():
             tag_name = TAGS.get(tag_id, tag_id)
             exif_data[tag_name] = value
     except (AttributeError, KeyError, IndexError):
+        # log the error
+        print(f"Error extracting EXIF data from image: {image}")
         pass
     
     return exif_data
@@ -40,13 +44,11 @@ def _get_exif_data(image: Image.Image) -> Dict[str, Any]:
 
 def _convert_to_degrees(value: tuple) -> float:
     """
-    Convert GPS coordinates from EXIF format to decimal degrees.
-    
-    EXIF stores GPS as ((degrees, 1), (minutes, 1), (seconds, 100))
-    
+    Convert GPS coordinates from degrees/minutes/seconds to decimal degrees.
+
     Args:
-        value: Tuple of (degrees, minutes, seconds) in EXIF format
-    
+        value: Tuple of (degrees, minutes, seconds) as numeric values
+
     Returns:
         Decimal degrees as float
     """
@@ -58,6 +60,7 @@ def _convert_to_degrees(value: tuple) -> float:
             s = float(value[2])
             return d + (m / 60.0) + (s / 3600.0)
     except (TypeError, ValueError, ZeroDivisionError):
+        print(f"Error converting GPS coordinates: {value}")
         pass
     
     return 0.0
@@ -123,6 +126,7 @@ def extract_gps_coordinates(image: Image.Image) -> Optional[Tuple[float, float]]
         
         return (latitude, longitude)
     except (KeyError, TypeError, ValueError):
+        print(f"Error extracting GPS coordinates from image: {image}")
         return None
 
 
@@ -152,6 +156,7 @@ def extract_timestamp(image: Image.Image) -> Optional[datetime]:
                 # EXIF format: "YYYY:MM:DD HH:MM:SS"
                 return datetime.strptime(timestamp_str, "%Y:%m:%d %H:%M:%S")
             except (ValueError, TypeError):
+                print(f"Error parsing timestamp: {timestamp_str}")
                 continue
     
     return None
@@ -238,6 +243,7 @@ def extract_metadata_from_bytes(image_bytes: bytes) -> Dict[str, Any]:
         image = Image.open(io.BytesIO(image_bytes))
         return extract_image_metadata(image)
     except Exception as e:
+        print(f"Error extracting metadata from bytes: {e}")
         return {
             "has_exif": False,
             "error": str(e)
@@ -265,6 +271,7 @@ def extract_metadata_from_file(file_path: str) -> Dict[str, Any]:
         image = Image.open(file_path)
         return extract_image_metadata(image)
     except Exception as e:
+        print(f"Error extracting metadata from file: {e}")
         return {
             "has_exif": False,
             "error": str(e)
@@ -303,7 +310,6 @@ def compare_metadata(
     
     if before_gps and after_gps:
         # Calculate approximate distance using Haversine formula
-        from math import radians, sin, cos, sqrt, atan2
         
         lat1 = radians(before_gps["latitude"])
         lon1 = radians(before_gps["longitude"])
@@ -357,6 +363,7 @@ def compare_metadata(
                     f"Time difference too large: {round(time_diff_minutes, 2)} minutes"
                 )
         except (ValueError, TypeError):
+            print(f"Error parsing timestamp: before='{before_time_str}', after='{after_time_str}'")
             result["verification_flags"].append("Invalid timestamp format")
     else:
         result["verification_flags"].append("Missing timestamp in one or both images")
