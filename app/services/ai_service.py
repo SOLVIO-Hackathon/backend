@@ -28,7 +28,7 @@ class GeminiAIService:
 
         # Initialize Gemini 2.5 Flash model
         self.model = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash",
             google_api_key=self.api_key,
             temperature=0.2,  # Lower temperature for more consistent structured outputs
             max_retries=3,
