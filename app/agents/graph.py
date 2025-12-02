@@ -13,6 +13,10 @@ Flow:
 from typing import Literal, Dict, Any
 from uuid import UUID
 
+import pygeohash
+from geoalchemy2.shape import from_shape
+from shapely.geometry import Point
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
@@ -23,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.user import User
+from app.models.quest import Quest, WasteType, Severity, QuestStatus
 from app.services.ai_service import get_ai_service
 from app.agents.state import AgentState, QuestDraft, WorkflowStage
 from app.agents.tools.quest_tools import (
@@ -272,11 +277,6 @@ Does this look correct? Please say 'yes' or 'confirm' to create the quest, or 'n
         if any(word in last_msg for word in ["yes", "confirm", "ok", "correct", "proceed"]):
             # User confirmed - create the quest
             try:
-                import pygeohash
-                from geoalchemy2.shape import from_shape
-                from shapely.geometry import Point
-                from app.models.quest import Quest, WasteType, Severity, QuestStatus
-                
                 # Calculate geohash
                 geohash = pygeohash.encode(
                     quest_draft.location_lat,

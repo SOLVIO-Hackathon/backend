@@ -1,12 +1,11 @@
 """Web Search Tool for ReAct Agent
 
-Uses SerpAPI's DuckDuckGo Search Engine Results API.
-Requires SERPAPI_API_KEY environment variable.
+Uses DuckDuckGo Instant Answer API (free, no authentication required).
+For production, can be upgraded to Tavily API with TAVILY_API_KEY.
 """
 
 from typing import Dict, Any
 import httpx
-import os
 
 from langchain_core.tools import tool
 
@@ -14,7 +13,7 @@ from langchain_core.tools import tool
 @tool
 async def search_waste_information(query: str, max_results: int = 3) -> Dict[str, Any]:
     """
-    Search for waste management information on the web using DuckDuckGo via SerpAPI.
+    Search for waste management information on the web using DuckDuckGo.
     
     Use this tool to answer questions about:
     - Waste disposal methods
@@ -33,23 +32,14 @@ async def search_waste_information(query: str, max_results: int = 3) -> Dict[str
         # Limit max results
         max_results = min(max_results, 5)
         
-        # Get SerpAPI key from environment
-        api_key = os.getenv("SERPAPI_API_KEY", "")
-        
-        if not api_key:
-            return {
-                "success": False,
-                "error": "SerpAPI key not configured. Please contact administrator.",
-                "results": []
-            }
-        
-        # Use SerpAPI DuckDuckGo Search Engine endpoint
-        url = "https://serpapi.com/search.json"
+        # Use DuckDuckGo Instant Answer API
+        # This is a simple API that doesn't require authentication
+        url = "https://api.duckduckgo.com/"
         params = {
-            "engine": "duckduckgo",
             "q": query,
-            "kl": "us-en",  # US English region
-            "api_key": api_key
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1"
         }
         
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -57,33 +47,43 @@ async def search_waste_information(query: str, max_results: int = 3) -> Dict[str
             response.raise_for_status()
             data = response.json()
         
-        # Extract organic results from SerpAPI response
+        # Extract relevant information
         results = []
-        organic_results = data.get("organic_results", [])
         
-        for result in organic_results[:max_results]:
+        # Add abstract if available
+        if data.get("Abstract"):
             results.append({
-                "title": result.get("title", ""),
-                "snippet": result.get("snippet", ""),
-                "url": result.get("link", ""),
-                "source": "DuckDuckGo via SerpAPI"
+                "title": data.get("Heading", "General Information"),
+                "snippet": data.get("Abstract"),
+                "url": data.get("AbstractURL", ""),
+                "source": data.get("AbstractSource", "DuckDuckGo")
             })
+        
+        # Add related topics
+        for topic in data.get("RelatedTopics", [])[:max_results-len(results)]:
+            if isinstance(topic, dict) and "Text" in topic:
+                results.append({
+                    "title": topic.get("FirstURL", "").split("/")[-1].replace("_", " "),
+                    "snippet": topic.get("Text", ""),
+                    "url": topic.get("FirstURL", ""),
+                    "source": "DuckDuckGo"
+                })
         
         # Format response
         if not results:
             return {
                 "success": True,
-                "message": f"No results found for '{query}'. Try rephrasing your question or ask me something else about waste management.",
+                "message": f"No specific results found for '{query}'. Try rephrasing your question or ask me something else about waste management.",
                 "results": []
             }
         
         # Format results as readable text
         formatted_results = []
-        for i, result in enumerate(results, 1):
+        for i, result in enumerate(results[:max_results], 1):
             formatted_results.append(
                 f"{i}. **{result['title']}**\n"
                 f"   {result['snippet']}\n"
-                f"   URL: {result['url']}"
+                f"   Source: {result['source']}"
             )
         
         message = f"Found {len(results)} result(s) for '{query}':\n\n" + "\n\n".join(formatted_results)
