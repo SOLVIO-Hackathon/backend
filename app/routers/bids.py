@@ -266,8 +266,8 @@ class QRGenerateResponse(BaseModel):
 
 
 class WeightConfirmRequest(BaseModel):
-    """Request to confirm weight via QR scan"""
-    qr_data: str = Field(description="Scanned QR code data")
+    """Request to confirm weight after pickup"""
+    bid_id: UUID = Field(description="ID of the accepted bid")
     weight_kg: Decimal = Field(ge=0.01, le=9999.99, description="Confirmed weight in kg")
 
 
@@ -341,44 +341,20 @@ async def generate_pickup_qr(
 
 
 @router.post("/confirm-weight", response_model=WeightConfirmResponse)
-async def confirm_weight_via_qr(
+async def confirm_weight(
     weight_data: WeightConfirmRequest,
-    confirm_excessive_weight: bool = Query(False, description="Flag to confirm weight even if it exceeds limits"),
+    confirm_excessive_weight: bool = Query(False, description="Flag to confirm weight even if it exceeds normal limits"),
     current_user: User = Depends(require_kabadiwala),
     session: AsyncSession = Depends(get_async_session),
 ):
     """
-    Kabadiwala scans QR code and confirms the weight of e-waste during pickup.
+    Kabadiwala confirms the weight of e-waste after pickup.
     This marks the listing as picked up with verified weight.
+
+    Flow: Accept bid → Chat → Receive goods → Enter weight → Confirm
     """
-    qr_service = get_qr_service()
-
-    # Parse QR data
-    parsed_qr = qr_service.parse_qr_data(weight_data.qr_data)
-
-    if not parsed_qr or parsed_qr.get("type") != "transaction":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid QR code data",
-        )
-
-    listing_id = UUID(parsed_qr["listing_id"])
-    bid_id = UUID(parsed_qr["transaction_id"])
-
-    # Get listing
-    listing_result = await session.execute(
-        select(Listing).where(Listing.id == listing_id)
-    )
-    listing = listing_result.scalar_one_or_none()
-
-    if not listing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Listing not found",
-        )
-
     # Get bid
-    bid_result = await session.execute(select(Bid).where(Bid.id == bid_id))
+    bid_result = await session.execute(select(Bid).where(Bid.id == weight_data.bid_id))
     bid = bid_result.scalar_one_or_none()
 
     if not bid:
@@ -398,35 +374,60 @@ async def confirm_weight_via_qr(
     if bid.status != BidStatus.ACCEPTED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This bid is not accepted",
+            detail="This bid is not accepted. Only accepted bids can have weight confirmed.",
+        )
+
+    # Get listing
+    listing_result = await session.execute(
+        select(Listing).where(Listing.id == bid.listing_id)
+    )
+    listing = listing_result.scalar_one_or_none()
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
         )
 
     # Weight Verification Logic
-    # Define reasonable weight ranges (in kg)
+    # Define typical weight ranges (in kg) for each device type
     WEIGHT_LIMITS = {
-        "laptop": {"max": 3.0},
-        "monitor": {"max": 12.0},
-        "mobile": {"max": 0.2},
-        "tablet": {"max": 0.8},
-        "desktop": {"max": 15.0},
+        "laptop": {"typical": 2.5, "max": 3.0},
+        "monitor": {"typical": 8.0, "max": 12.0},
+        "mobile": {"typical": 0.15, "max": 0.2},
+        "tablet": {"typical": 0.5, "max": 0.8},
+        "desktop": {"typical": 10.0, "max": 15.0},
     }
 
     device_type = listing.device_type.value
-    weight_limit = WEIGHT_LIMITS.get(device_type, {}).get("max")
+    weight_info = WEIGHT_LIMITS.get(device_type, {})
+    typical_weight = weight_info.get("typical")
+    max_weight = weight_info.get("max")
 
     message = f"Weight confirmed: {weight_data.weight_kg} kg. Listing marked as picked up."
+    warning_message = None
 
-    if weight_limit:
-        # Check if weight is > 20% above max
-        threshold = Decimal(str(weight_limit)) * Decimal("1.2")
+    if typical_weight and max_weight:
+        # Check if weight exceeds typical weight significantly (20% threshold)
+        threshold = Decimal(str(max_weight)) * Decimal("1.2")
+
         if weight_data.weight_kg > threshold:
+            warning_message = f"Normally, this type of e-waste ({device_type}) weighs around {typical_weight} kg (max ~{max_weight} kg). You entered {weight_data.weight_kg} kg. Are you sure the weight is correct?"
+
             if not confirm_excessive_weight:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Reported weight ({weight_data.weight_kg} kg) is significantly above average for this device type (max expected ~{weight_limit} kg). Please confirm if this is correct.",
+                    detail={
+                        "error": "weight_exceeds_normal",
+                        "message": warning_message,
+                        "entered_weight": float(weight_data.weight_kg),
+                        "typical_weight": typical_weight,
+                        "max_expected_weight": max_weight,
+                        "suggestion": "Please verify the weight and add '?confirm_excessive_weight=true' if the weight is correct."
+                    }
                 )
             else:
-                message += f" (Note: Weight exceeded average limit of {weight_limit} kg)"
+                message += f" ⚠️ Warning: Weight exceeded typical range ({typical_weight} kg typical, {max_weight} kg max)."
 
     # Update listing with weight and mark as picked up
     listing.weight_kg = weight_data.weight_kg

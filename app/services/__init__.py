@@ -4,6 +4,7 @@ from app.services.stripe_service import StripeService
 from app.services.firebase_storage import FirebaseStorageService, get_storage_service
 from app.services.qr_service import QRCodeService, get_qr_service
 from app.services.routing_service import RoutingService, get_routing_service
+from app.services.external_price_api import ExternalPriceAPIService, get_external_price_service
 
 __all__ = [
     "GeminiAIService", "get_ai_service",
@@ -11,4 +12,5 @@ __all__ = [
     "FirebaseStorageService", "get_storage_service",
     "QRCodeService", "get_qr_service",
     "RoutingService", "get_routing_service",
+    "ExternalPriceAPIService", "get_external_price_service",
 ]

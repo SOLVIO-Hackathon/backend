@@ -20,6 +20,7 @@ from app.schemas.listing import (
 )
 from app.services.ai_service import get_ai_service
 from app.services.price_prediction_service import get_predictor
+from app.services.external_price_api import get_external_price_service
 
 from pydantic import BaseModel, HttpUrl
 
@@ -109,7 +110,7 @@ async def create_listing(
         estimated_max = 1500.0
         ai_classification = {"error": str(e)}
 
-    # Use local ML model for price prediction if user provided required fields
+    # Use external trained model API for price prediction if user provided required fields
     if all([
         listing_data.brand,
         listing_data.build_quality is not None,
@@ -119,55 +120,82 @@ async def create_listing(
         listing_data.user_lifespan is not None,
         listing_data.expiry_years is not None,
     ]):
-        try:
-            # Map device condition to numeric value (1-10 scale)
-            # NOT_WORKING devices get lower score, WORKING get higher score
-            condition_mapping = {
-                DeviceCondition.NOT_WORKING: 3,
-                DeviceCondition.PARTIALLY_WORKING: 6,
-                DeviceCondition.WORKING: 9,
-            }
-            condition_numeric = condition_mapping.get(listing_data.condition, 7)
+        # Map device condition to numeric value (1-10 scale)
+        condition_mapping = {
+            DeviceCondition.NOT_WORKING: 3,
+            DeviceCondition.PARTIALLY_WORKING: 6,
+            DeviceCondition.WORKING: 9,
+        }
+        condition_numeric = condition_mapping.get(listing_data.condition, 7)
 
-            # Map device type to product type string (capitalized for API)
-            product_type_mapping = {
-                "laptop": "Laptop",
-                "desktop": "Desktop",
-                "monitor": "Monitor",
-                "mobile": "Mobile",
-                "tablet": "Tablet",
-                "other": "Other",
-            }
-            product_type = product_type_mapping.get(
-                listing_data.device_type.value, "Other"
+        # Map device type to product type string (capitalized for API)
+        product_type_mapping = {
+            "laptop": "Laptop",
+            "desktop": "Desktop",
+            "monitor": "Monitor",
+            "mobile": "Mobile",
+            "tablet": "Tablet",
+            "other": "Other",
+        }
+        product_type = product_type_mapping.get(
+            listing_data.device_type.value, "Other"
+        )
+
+        # Try external API first
+        try:
+            logger.info("Attempting price prediction with external API")
+            external_service = get_external_price_service()
+            base_price = await external_service.predict_price(
+                brand=listing_data.brand,
+                build_quality=listing_data.build_quality,
+                condition=condition_numeric,
+                expiry_years=listing_data.expiry_years,
+                original_price=float(listing_data.original_price),
+                product_type=product_type,
+                usage_pattern=listing_data.usage_pattern,
+                used_duration=listing_data.used_duration,
+                user_lifespan=listing_data.user_lifespan
             )
 
-            # Prepare input data for local ML model
-            input_df = pd.DataFrame([{
-                'Brand': listing_data.brand,
-                'Product_Type': product_type,
-                'Build_Quality': listing_data.build_quality,
-                'Condition': condition_numeric,
-                'Original_Price': float(listing_data.original_price),
-                'Usage_Pattern': listing_data.usage_pattern,
-                'Used_Duration': listing_data.used_duration,
-                'User_Lifespan': listing_data.user_lifespan,
-                'Expiry_Years': listing_data.expiry_years,
-            }])
-
-            # Get local ML predictor and predict
-            predictor = get_predictor()
-            predictions = predictor.predict(input_df)
-            
-            if predictions and len(predictions) > 0:
-                base_price = Decimal(str(predictions[0]))
-                logger.info(f"Price prediction successful: base_price = {base_price}")
+            if base_price is not None:
+                logger.info(f"External API price prediction successful: base_price = {base_price}")
             else:
-                logger.warning("Price prediction returned empty result")
+                logger.warning("External API returned None, falling back to local model")
 
         except Exception as e:
-            logger.error(f"Price prediction failed: {e}")
-            # Continue without base_price
+            logger.error(f"External API price prediction failed: {e}, falling back to local model")
+            base_price = None
+
+        # Fallback to local ML model if external API failed
+        if base_price is None:
+            try:
+                logger.info("Using local ML model as fallback")
+                # Prepare input data for local ML model
+                input_df = pd.DataFrame([{
+                    'Brand': listing_data.brand,
+                    'Product_Type': product_type,
+                    'Build_Quality': listing_data.build_quality,
+                    'Condition': condition_numeric,
+                    'Original_Price': float(listing_data.original_price),
+                    'Usage_Pattern': listing_data.usage_pattern,
+                    'Used_Duration': listing_data.used_duration,
+                    'User_Lifespan': listing_data.user_lifespan,
+                    'Expiry_Years': listing_data.expiry_years,
+                }])
+
+                # Get local ML predictor and predict
+                predictor = get_predictor()
+                predictions = predictor.predict(input_df)
+
+                if predictions and len(predictions) > 0:
+                    base_price = Decimal(str(predictions[0]))
+                    logger.info(f"Local ML price prediction successful: base_price = {base_price}")
+                else:
+                    logger.warning("Local ML prediction returned empty result")
+
+            except Exception as e:
+                logger.error(f"Local ML price prediction also failed: {e}")
+                # Continue without base_price
 
     listing = Listing(
         seller_id=current_user.id,

@@ -32,3 +32,5 @@ E-waste category/
 *.zip
 *.h5
 *.pkl
+
+notebooks/
