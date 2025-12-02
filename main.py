@@ -6,48 +6,48 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, agent, sentiment, bin_prediction
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, sentiment, bin_prediction, agent
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler"""
     # Startup
-    print("🚀 Starting Zerobin API...")
+    print("Starting Zerobin API...")
     # Uncomment to auto-create tables (use Alembic in production)
     # await init_db()
-    print("✅ Database connected")
-    
+    print("Database connected")
+
     # Load E-Waste price prediction models
     try:
         from app.services.price_prediction_service import get_predictor
-        print("📊 Loading E-Waste price prediction models...")
+        print("Loading E-Waste price prediction models...")
         get_predictor()
-        print("✅ Price prediction models loaded")
+        print("Price prediction models loaded")
     except Exception as e:
-        print(f"⚠️  Warning: Failed to load price prediction models: {e}")
+        print(f"Warning: Failed to load price prediction models: {e}")
 
     # Load Bangla sentiment analysis model
     try:
         from app.services.sentiment_service import get_sentiment_analyzer
-        print("💬 Loading Bangla sentiment analysis model...")
+        print("Loading Bangla sentiment analysis model...")
         get_sentiment_analyzer()
-        print("✅ Sentiment analysis model loaded")
+        print("Sentiment analysis model loaded")
     except Exception as e:
-        print(f"⚠️  Warning: Failed to load sentiment analysis model: {e}")
-    
+        print(f"Warning: Failed to load sentiment analysis model: {e}")
+
     # Load Bin fill prediction model
     try:
         from app.services.bin_prediction_service import get_bin_prediction_service
-        print("🗑️  Loading Bin fill prediction model...")
+        print("Loading Bin fill prediction model...")
         get_bin_prediction_service()
-        print("✅ Bin prediction model loaded")
+        print("Bin prediction model loaded")
     except Exception as e:
-        print(f"⚠️  Warning: Failed to load bin prediction model: {e}")
-    
+        print(f"Warning: Failed to load bin prediction model: {e}")
+
     yield
     # Shutdown
-    print("👋 Shutting down Zerobin API...")
+    print("Shutting down Zerobin API...")
 
 
 # Main FastAPI application
@@ -149,7 +149,7 @@ api_v1.openapi = custom_openapi
 # Include routers in v1
 api_v1.include_router(health.router)
 api_v1.include_router(auth.router)
-api_v1.include_router(agent.router)  # ReAct Agent
+api_v1.include_router(agent.router)
 api_v1.include_router(quests.router)
 api_v1.include_router(collectors.router)
 api_v1.include_router(notifications.router)

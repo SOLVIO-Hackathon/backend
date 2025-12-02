@@ -32,11 +32,7 @@ class AgentChatResponse(BaseModel):
         ...,
         description="Session ID for this conversation. Use this in subsequent requests to continue the conversation."
     )
-    workflow_stage: str = Field(
-        ...,
-        description="Current workflow stage (idle, awaiting_image, awaiting_location, etc.)"
-    )
     metadata: Optional[Dict[str, Any]] = Field(
         None,
-        description="Additional metadata about the response (e.g., quest_draft status, tool calls made)"
+        description="Additional metadata about the response (e.g., tool calls made)"
     )

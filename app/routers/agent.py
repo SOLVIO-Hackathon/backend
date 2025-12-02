@@ -18,7 +18,7 @@ from app.core.database import get_async_session
 from app.models.user import User, UserType
 from app.schemas.agent import AgentChatRequest, AgentChatResponse
 from app.agents.graph import create_agent_graph
-from app.agents.state import AgentState, QuestDraft
+from app.agents.state import AgentState
 
 
 # Router configuration
@@ -86,8 +86,6 @@ def load_or_create_session(session_id: str, current_user: User) -> Dict[str, Any
         "user_email": current_user.email,
         "user_type": current_user.user_type.value,
         "session_id": session_id,
-        "quest_draft": None,
-        "workflow_stage": "idle",
         "tool_call_count": 0,
         "max_tool_calls": 15
     }
@@ -216,7 +214,7 @@ async def agent_chat(
         # LangGraph will handle the conversation flow
         config = {"configurable": {"thread_id": session_id}}
         result = await graph.ainvoke(agent_state, config=config)
-        
+
         # Extract the agent's response (last AI message)
         agent_response = ""
         for msg in reversed(result["messages"]):
@@ -235,21 +233,10 @@ async def agent_chat(
             "tool_call_count": result.get("tool_call_count", 0),
             "max_tool_calls": result.get("max_tool_calls", 15),
         }
-        
-        # Add quest draft info if exists
-        if result.get("quest_draft"):
-            draft = result["quest_draft"]
-            metadata["quest_draft"] = {
-                "has_image": draft.image_url is not None,
-                "has_location": draft.location_lat is not None and draft.location_lng is not None,
-                "has_analysis": draft.description is not None,
-                "confirmed": draft.user_confirmed
-            }
-        
+
         return AgentChatResponse(
             response=agent_response,
             session_id=session_id,
-            workflow_stage=result["workflow_stage"],
             metadata=metadata
         )
         
@@ -313,7 +300,6 @@ async def list_sessions(
         if str(data["state"]["user_id"]) == str(current_user.id):
             user_sessions.append({
                 "session_id": session_id,
-                "workflow_stage": data["state"]["workflow_stage"],
                 "message_count": len(data["state"]["messages"]),
                 "last_accessed": data["last_accessed"].isoformat()
             })
