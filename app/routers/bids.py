@@ -42,6 +42,13 @@ async def create_bid(
             detail="Listing is not accepting bids",
         )
 
+    # Validate bid is not below base_price (if base_price is set)
+    if listing.base_price is not None and bid_data.offered_price < listing.base_price:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bid amount ({bid_data.offered_price}) cannot be below the base price ({listing.base_price})",
+        )
+
     # Create bid
     bid = Bid(
         listing_id=bid_data.listing_id,

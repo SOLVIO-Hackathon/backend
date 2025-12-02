@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user, require_kabadiwala
 from app.models.user import User
-from app.models.listing import Listing, ListingStatus
+from app.models.listing import Listing, ListingStatus, DeviceCondition
 from app.schemas.listing import (
     ListingCreate,
     ListingUpdate,
@@ -16,6 +16,7 @@ from app.schemas.listing import (
     ListingList,
 )
 from app.services.ai_service import get_ai_service
+from app.services.external_price_prediction import get_external_price_prediction_service
 
 from pydantic import BaseModel, HttpUrl
 
@@ -63,6 +64,7 @@ async def create_listing(
 
     # Call AI service to estimate value from the first image
     ai_service = get_ai_service()
+    base_price = None
 
     try:
         # Use the first image for AI classification
@@ -103,6 +105,61 @@ async def create_listing(
         estimated_max = 1500.0
         ai_classification = {"error": str(e)}
 
+    # Call external price prediction API if user provided required fields
+    if all([
+        listing_data.brand,
+        listing_data.build_quality is not None,
+        listing_data.original_price is not None,
+        listing_data.usage_pattern,
+        listing_data.used_duration is not None,
+        listing_data.user_lifespan is not None,
+        listing_data.expiry_years is not None,
+    ]):
+        try:
+            # Map device condition to numeric value (1-10 scale)
+            condition_mapping = {
+                DeviceCondition.NOT_WORKING: 3,
+                DeviceCondition.PARTIALLY_WORKING: 6,
+                DeviceCondition.WORKING: 9,
+            }
+            condition_numeric = condition_mapping.get(listing_data.condition, 7)
+
+            # Map device type to product type string
+            product_type_mapping = {
+                "laptop": "Laptop",
+                "desktop": "Desktop",
+                "monitor": "Monitor",
+                "mobile": "Mobile",
+                "tablet": "Tablet",
+                "other": "Other",
+            }
+            product_type = product_type_mapping.get(
+                listing_data.device_type.value, "Other"
+            )
+
+            price_service = get_external_price_prediction_service()
+            predicted_price = await price_service.predict_price(
+                brand=listing_data.brand,
+                build_quality=listing_data.build_quality,
+                condition=condition_numeric,
+                expiry_years=listing_data.expiry_years,
+                original_price=float(listing_data.original_price),
+                product_type=product_type,
+                usage_pattern=listing_data.usage_pattern,
+                used_duration=listing_data.used_duration,
+                user_lifespan=listing_data.user_lifespan,
+            )
+
+            if predicted_price is not None:
+                base_price = predicted_price
+                print(f"Price prediction successful: base_price = {base_price}")
+            else:
+                print("Price prediction API returned None")
+
+        except Exception as e:
+            print(f"Price prediction failed: {e}")
+            # Continue without base_price
+
     listing = Listing(
         seller_id=current_user.id,
         device_type=listing_data.device_type,
@@ -113,6 +170,7 @@ async def create_listing(
         location=f"POINT({listing_data.location.longitude} {listing_data.location.latitude})",
         estimated_value_min=estimated_min,
         estimated_value_max=estimated_max,
+        base_price=base_price,
         ai_classification=ai_classification,
     )
 

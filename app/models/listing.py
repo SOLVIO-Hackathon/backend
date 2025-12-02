@@ -67,6 +67,7 @@ class Listing(Base):
     # Pricing
     estimated_value_min: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     estimated_value_max: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
+    base_price: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(10, 2), nullable=True)
     final_price: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(10, 2), nullable=True)
 
     # Location

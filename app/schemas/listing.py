@@ -22,6 +22,14 @@ class ListingBase(BaseModel):
 class ListingCreate(ListingBase):
     """Schema for creating a listing"""
     image_urls: List[str] = Field(..., min_items=1, max_items=5)
+    # Optional price prediction inputs
+    brand: Optional[str] = None
+    build_quality: Optional[int] = Field(None, ge=1, le=10)
+    original_price: Optional[Decimal] = None
+    usage_pattern: Optional[str] = None
+    used_duration: Optional[int] = Field(None, ge=0)
+    user_lifespan: Optional[int] = Field(None, ge=0)
+    expiry_years: Optional[int] = Field(None, ge=0)
 
     model_config = {
         "json_schema_extra": {
@@ -34,7 +42,14 @@ class ListingCreate(ListingBase):
                 "image_urls": [
                     "https://storage.example.com/devices/laptop1.jpg",
                     "https://storage.example.com/devices/laptop2.jpg"
-                ]
+                ],
+                "brand": "Dell",
+                "build_quality": 8,
+                "original_price": 800,
+                "usage_pattern": "Moderate",
+                "used_duration": 2,
+                "user_lifespan": 5,
+                "expiry_years": 7
             }
         }
     }
@@ -62,6 +77,7 @@ class ListingResponse(BaseModel):
     description: Optional[str]
     estimated_value_min: Decimal
     estimated_value_max: Decimal
+    base_price: Optional[Decimal]
     final_price: Optional[Decimal]
     location: dict  # GeoJSON representation
     status: ListingStatus
