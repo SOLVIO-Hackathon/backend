@@ -34,13 +34,11 @@ class ChatMessageResponse(BaseModel):
 class ChatCreate(BaseModel):
     """Schema for creating a chat"""
     listing_id: UUID = Field(..., description="ID of the listing for this chat")
-    buyer_id: UUID = Field(..., description="ID of the buyer initiating the chat")
 
     model_config = {
         "json_schema_extra": {
             "example": {
-                "listing_id": "123e4567-e89b-12d3-a456-426614174000",
-                "buyer_id": "456e4567-e89b-12d3-a456-426614174000"
+                "listing_id": "123e4567-e89b-12d3-a456-426614174000"
             }
         }
     }

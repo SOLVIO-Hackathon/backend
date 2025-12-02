@@ -2,17 +2,19 @@
 Collector availability and workload management endpoints.
 """
 
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user
 from app.models.user import User, UserType
 from app.models.quest import Quest, QuestStatus
+from app.schemas.quest import QuestResponse, QuestList
 
 
 router = APIRouter(prefix="/collectors", tags=["Collectors"])
@@ -145,3 +147,59 @@ async def get_collector_workload(
         status=current_user.collector_status or "available",
         fraud_risk_score=current_user.fraud_risk_score
     )
+
+
+@router.get("/me/quests", response_model=QuestList)
+async def get_my_assigned_quests(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    status_filter: Optional[QuestStatus] = None,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get all quests assigned to the current collector.
+
+    Collectors can filter by status to view:
+    - ASSIGNED: Newly assigned quests not yet started
+    - IN_PROGRESS: Quests currently being worked on
+    - COMPLETED: Quests completed and awaiting verification
+    - VERIFIED: Successfully verified quests
+    - REJECTED: Quests that were rejected
+
+    Returns paginated list of quests with full details including reporter info.
+    """
+    if current_user.user_type != UserType.COLLECTOR:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only collectors can view assigned quests"
+        )
+
+    # Build query for quests assigned to this collector
+    query = select(Quest).where(
+        Quest.collector_id == current_user.id
+    ).options(
+        selectinload(Quest.reporter),
+        selectinload(Quest.collector)
+    )
+
+    # Apply status filter if provided
+    if status_filter:
+        query = query.where(Quest.status == status_filter)
+
+    # Get total count
+    count_query = select(func.count()).select_from(Quest).where(
+        Quest.collector_id == current_user.id
+    )
+    if status_filter:
+        count_query = count_query.where(Quest.status == status_filter)
+
+    total_result = await session.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Get paginated quests, ordered by most recent first
+    query = query.offset(skip).limit(limit).order_by(Quest.assigned_at.desc())
+    result = await session.execute(query)
+    quests = result.scalars().all()
+
+    return QuestList(items=quests, total=total, skip=skip, limit=limit)

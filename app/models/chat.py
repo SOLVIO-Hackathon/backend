@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from typing import Optional, List, TYPE_CHECKING
-from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime, Text, ForeignKey
+from sqlalchemy import String, Boolean, Enum as SQLEnum, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -23,6 +23,9 @@ class ChatStatus(str, enum.Enum):
 class Chat(Base):
     """Chat model for in-app messaging between users"""
     __tablename__ = "chats"
+    __table_args__ = (
+        UniqueConstraint('listing_id', 'buyer_id', name='uq_chat_listing_buyer'),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -39,7 +42,7 @@ class Chat(Base):
     )
 
     status: Mapped[ChatStatus] = mapped_column(
-        SQLEnum(ChatStatus), default=ChatStatus.LOCKED, index=True
+        SQLEnum(ChatStatus), default=ChatStatus.UNLOCKED, index=True
     )
     deal_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
 

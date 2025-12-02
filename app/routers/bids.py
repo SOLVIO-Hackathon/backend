@@ -3,12 +3,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user, require_kabadiwala
 from app.models.user import User
 from app.models.listing import Listing, ListingStatus
 from app.models.bid import Bid, BidStatus
+from app.models.chat import Chat, ChatStatus
 from app.schemas.bid import BidCreate, BidUpdate, BidResponse
 from app.services.qr_service import get_qr_service
 from decimal import Decimal
@@ -42,12 +44,23 @@ async def create_bid(
             detail="Listing is not accepting bids",
         )
 
-    # Validate bid is not below base_price (if base_price is set)
-    if listing.base_price is not None and bid_data.offered_price < listing.base_price:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bid amount ({bid_data.offered_price}) cannot be below the base price ({listing.base_price})",
-        )
+    # Validate bid amount
+    # If base_price is set (from ML prediction), use that as minimum
+    if listing.base_price is not None:
+        if bid_data.offered_price < listing.base_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bid amount (Tk {bid_data.offered_price}) cannot be below the base price (Tk {listing.base_price})",
+            )
+    else:
+        # Otherwise, require bid to be at least 50% of the estimated minimum value
+        # This prevents unreasonably low bids like Tk 1 for a device worth Tk 5000+
+        minimum_acceptable_bid = listing.estimated_value_min * Decimal("0.5")
+        if bid_data.offered_price < minimum_acceptable_bid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bid amount (Tk {bid_data.offered_price}) is too low. Minimum acceptable bid is Tk {minimum_acceptable_bid:.2f} (50% of estimated minimum value Tk {listing.estimated_value_min})",
+            )
 
     # Create bid
     bid = Bid(
@@ -64,7 +77,7 @@ async def create_bid(
 
     session.add(bid)
     await session.commit()
-    await session.refresh(bid)
+    await session.refresh(bid, ["kabadiwala"])
 
     return bid
 
@@ -75,7 +88,12 @@ async def get_bids_for_listing(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Get all bids for a specific listing"""
+    """Get all bids for a specific listing
+
+    - Seller sees ALL bids on their listing
+    - Kabadiwala sees ONLY their own bid on this listing
+    - Admin sees all bids
+    """
     # Check if listing exists and user has access
     listing_result = await session.execute(
         select(Listing).where(Listing.id == listing_id)
@@ -88,21 +106,39 @@ async def get_bids_for_listing(
             detail="Listing not found",
         )
 
-    # Only seller can see all bids
-    if listing.seller_id != current_user.id and current_user.user_type.value != "admin":
+    # Determine what bids user can see
+    is_seller = listing.seller_id == current_user.id
+    is_admin = current_user.user_type.value == "admin"
+    is_kabadiwala = current_user.user_type.value == "kabadiwala"
+
+    # Build query based on authorization
+    if is_seller or is_admin:
+        # Seller and admin can see all bids
+        result = await session.execute(
+            select(Bid)
+            .options(selectinload(Bid.kabadiwala))
+            .where(Bid.listing_id == listing_id)
+            .order_by(Bid.created_at.desc())
+        )
+    elif is_kabadiwala:
+        # Kabadiwala can only see their own bid
+        result = await session.execute(
+            select(Bid)
+            .options(selectinload(Bid.kabadiwala))
+            .where(
+                Bid.listing_id == listing_id,
+                Bid.kabadiwala_id == current_user.id
+            )
+            .order_by(Bid.created_at.desc())
+        )
+    else:
+        # Regular citizens cannot view bids
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view bids for this listing",
         )
 
-    # Get bids
-    result = await session.execute(
-        select(Bid)
-        .where(Bid.listing_id == listing_id)
-        .order_by(Bid.created_at.desc())
-    )
     bids = result.scalars().all()
-
     return bids
 
 
@@ -114,6 +150,7 @@ async def get_my_bids(
     """Get all bids created by current kabadiwala"""
     result = await session.execute(
         select(Bid)
+        .options(selectinload(Bid.kabadiwala))
         .where(Bid.kabadiwala_id == current_user.id)
         .order_by(Bid.created_at.desc())
     )
@@ -158,8 +195,27 @@ async def accept_bid(
     listing.buyer_id = bid.kabadiwala_id
     listing.final_price = bid.offered_price
 
+    # Create or get chat for this transaction
+    chat_result = await session.execute(
+        select(Chat).where(
+            Chat.listing_id == listing.id,
+            Chat.buyer_id == bid.kabadiwala_id
+        )
+    )
+    existing_chat = chat_result.scalar_one_or_none()
+
+    if not existing_chat:
+        # Create new chat (UNLOCKED for immediate messaging)
+        chat = Chat(
+            listing_id=listing.id,
+            seller_id=listing.seller_id,
+            buyer_id=bid.kabadiwala_id,
+            status=ChatStatus.UNLOCKED
+        )
+        session.add(chat)
+
     await session.commit()
-    await session.refresh(bid)
+    await session.refresh(bid, ["kabadiwala"])
 
     return bid
 

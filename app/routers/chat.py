@@ -3,6 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
+from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user
@@ -25,7 +27,7 @@ async def create_chat(
 ):
     """
     Create a new chat for a listing.
-    
+
     Chat is created in LOCKED status until deal is confirmed.
     Only the buyer (kabadiwala) can initiate a chat on a listing.
     """
@@ -59,17 +61,30 @@ async def create_chat(
             detail="Chat already exists for this listing"
         )
 
-    # Create chat (starts as LOCKED)
+    # Create chat (starts as UNLOCKED so users can message immediately)
     chat = Chat(
         listing_id=chat_data.listing_id,
         seller_id=listing.seller_id,
         buyer_id=current_user.id,
-        status=ChatStatus.LOCKED
+        status=ChatStatus.UNLOCKED
     )
 
     session.add(chat)
-    await session.commit()
-    await session.refresh(chat)
+    try:
+        await session.commit()
+        await session.refresh(chat, ["messages"])
+    except IntegrityError:
+        # If unique constraint is violated, fetch the existing chat
+        await session.rollback()
+        result = await session.execute(
+            select(Chat)
+            .options(selectinload(Chat.messages))
+            .where(
+                Chat.listing_id == chat_data.listing_id,
+                Chat.buyer_id == current_user.id
+            )
+        )
+        chat = result.scalar_one()
 
     return chat
 
@@ -101,6 +116,34 @@ async def list_chats(
     return ChatList(items=chats, total=total)
 
 
+@router.get("/listing/{listing_id}", response_model=ChatResponse)
+async def get_chat_by_listing(
+    listing_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get chat for a specific listing"""
+    result = await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(
+            Chat.listing_id == listing_id,
+            or_(Chat.seller_id == current_user.id, Chat.buyer_id == current_user.id)
+        )
+        .order_by(Chat.created_at.desc())
+        .limit(1)
+    )
+    chat = result.scalar_one_or_none()
+
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat not found for this listing"
+        )
+
+    return chat
+
+
 @router.get("/{chat_id}", response_model=ChatResponse)
 async def get_chat(
     chat_id: UUID,
@@ -108,7 +151,11 @@ async def get_chat(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Get a specific chat with messages"""
-    result = await session.execute(select(Chat).where(Chat.id == chat_id))
+    result = await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.id == chat_id)
+    )
     chat = result.scalar_one_or_none()
 
     if not chat:
@@ -136,11 +183,15 @@ async def confirm_deal(
 ):
     """
     Confirm deal to unlock the chat.
-    
+
     Both seller and buyer must confirm for the chat to be unlocked.
     This is typically done after a bid is accepted.
     """
-    result = await session.execute(select(Chat).where(Chat.id == chat_id))
+    result = await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.id == chat_id)
+    )
     chat = result.scalar_one_or_none()
 
     if not chat:
@@ -161,7 +212,7 @@ async def confirm_deal(
         chat.status = ChatStatus.UNLOCKED
 
     await session.commit()
-    await session.refresh(chat)
+    await session.refresh(chat, ["messages"])
 
     return chat
 
@@ -271,7 +322,11 @@ async def close_chat(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Close a chat (usually after transaction is complete)"""
-    result = await session.execute(select(Chat).where(Chat.id == chat_id))
+    result = await session.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.id == chat_id)
+    )
     chat = result.scalar_one_or_none()
 
     if not chat:
@@ -289,6 +344,6 @@ async def close_chat(
 
     chat.status = ChatStatus.CLOSED
     await session.commit()
-    await session.refresh(chat)
+    await session.refresh(chat, ["messages"])
 
     return chat
