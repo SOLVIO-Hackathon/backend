@@ -121,31 +121,69 @@ async def agent_chat(
     session: AsyncSession = Depends(get_async_session)
 ):
     """
-    Chat with the ReAct agent to create quests, query data, and get information.
-    
-    **Authentication:** Requires JWT Bearer token in Authorization header.
-    
-    **User Type:** Only CITIZEN users can use this endpoint.
-    
-    **Features:**
-    - Multi-step quest creation workflow
-    - Query your own quests and transactions
-    - Search for waste management information
-    - Conversational interface
-    
-    **Example Flow:**
-    1. POST with message: "I want to report waste"
-    2. Agent asks for image URL
-    3. POST with image URL
-    4. Agent asks for location
-    5. POST with coordinates
-    6. Agent analyzes image and shows preview
-    7. POST "yes" to confirm and create quest
-    
-    **Session Management:**
-    - First request: Don't provide session_id, agent will create one
-    - Subsequent requests: Use session_id from previous response
-    - Sessions expire after 1 hour of inactivity
+    Conversational AI agent for waste management - creates quests, queries data, answers questions.
+
+    **🔐 Authentication (REQUIRED ON EVERY REQUEST):**
+    - Include JWT token in Authorization header: `Bearer <your_token>`
+    - Get token from POST /auth/login
+    - User type: CITIZEN only
+
+    **⚡ Smart Tool Usage:**
+    The agent intelligently chooses when to use tools vs answering directly:
+    - **Fast responses** for greetings and general waste questions (no tools)
+    - **Database queries** only when you ask about YOUR data ("my quests", "my stats")
+    - **Web search** only for specific questions requiring external info
+
+    **✅ Features:**
+    1. **Quest Creation** - Multi-step guided workflow:
+       - Provide image URL → GPS coordinates → AI analysis → Confirm → Quest created
+
+    2. **Data Queries** - Read-only access to YOUR data:
+       - "show my quests" - View quests you've created
+       - "my statistics" - Get your quest stats and bounty points
+       - "my transactions" - View your payment history
+
+    3. **Information** - Waste management knowledge:
+       - General advice: "how to recycle plastic?"
+       - Specific info: "waste disposal laws in Dhaka"
+
+    **🚫 Security & Guardrails:**
+    - You can ONLY access your own data (enforced by user_id filtering)
+    - Read-only database access (except quest creation)
+    - Off-topic questions are politely redirected
+    - Tool call limit: 15 per session to prevent infinite loops
+
+    **💬 Example Conversations:**
+
+    Simple question (fast, no tools):
+    ```
+    User: "Hello!"
+    Agent: "Hi! I'm here to help with waste management. Want to report waste or check your quests?"
+    ```
+
+    Quest creation workflow:
+    ```
+    User: "I want to report waste"
+    Agent: "Great! Please provide the image URL"
+    User: "https://example.com/waste.jpg"
+    Agent: "Got it! Now I need the location (latitude, longitude)"
+    User: "23.790720, 90.405645"
+    Agent: "Perfect! Analyzing... **Quest Preview:** Large pile of plastic..."
+    User: "yes"
+    Agent: "✅ Quest created! Quest ID: abc-123, Bounty: 50 points"
+    ```
+
+    Data query (uses database tools):
+    ```
+    User: "Show my quests"
+    Agent: "Found 3 quests: [Quest 1: Plastic waste - Completed, Quest 2: ...]"
+    ```
+
+    **📝 Session Management:**
+    - First request: Omit session_id (agent creates one)
+    - Subsequent requests: Include session_id from response
+    - Session timeout: 1 hour of inactivity
+    - Endpoint: DELETE /agent/session/{session_id} to clear session
     """
     # Verify user type
     if current_user.user_type != UserType.CITIZEN:
