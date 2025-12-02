@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, badges, ratings
+
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings
 
 
 @asynccontextmanager
@@ -14,9 +15,19 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler"""
     # Startup
     print("🚀 Starting Zerobin API...")
-    # Initialize database and create tables if they don't exist
-    await init_db()
-    print("✅ Database connected and tables created")
+    # Uncomment to auto-create tables (use Alembic in production)
+    # await init_db()
+    print("✅ Database connected")
+    
+    # Load E-Waste price prediction models
+    try:
+        from app.services.price_prediction_service import get_predictor
+        print("📊 Loading E-Waste price prediction models...")
+        get_predictor()
+        print("✅ Price prediction models loaded")
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to load price prediction models: {e}")
+    
     yield
     # Shutdown
     print("👋 Shutting down Zerobin API...")
@@ -69,6 +80,7 @@ api_v1 = FastAPI(
         {"name": "Admin Review", "description": "Human-in-the-loop review for flagged quests"},
         {"name": "Dashboard", "description": "Admin dashboard and analytics"},
         {"name": "AI Category", "description": "AI-powered e-waste image classification"},
+        {"name": "E-Waste Price Prediction", "description": "ML-powered e-waste price estimation"},
     ],
     swagger_ui_parameters={
         "persistAuthorization": True,
@@ -128,6 +140,7 @@ api_v1.include_router(disposal.router)
 api_v1.include_router(admin_review.router)
 api_v1.include_router(dashboard.router)
 api_v1.include_router(ai_category.router)
+api_v1.include_router(price_prediction.router)
 
 # Mount v1 API at root level (so /docs works directly)
 app.mount("", api_v1)
