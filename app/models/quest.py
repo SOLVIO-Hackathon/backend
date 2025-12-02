@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy import String, Integer, Float, Enum as SQLEnum, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -99,6 +99,9 @@ class Quest(Base):
     )
     collector: Mapped[Optional["User"]] = relationship(
         "User", back_populates="collected_quests", foreign_keys=[collector_id]
+    )
+    assignment_history: Mapped[List["QuestAssignmentHistory"]] = relationship(
+        "QuestAssignmentHistory", back_populates="quest"
     )
 
     def __repr__(self) -> str:

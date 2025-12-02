@@ -1,5 +1,5 @@
 from typing import AsyncGenerator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -64,8 +64,14 @@ def get_session():
 async def init_db():
     """Initialize database tables"""
     async with async_engine.begin() as conn:
-        # Import all models here to ensure they are registered
-        from app.models import user, quest, listing, bid, transaction, badge
+        # Enable PostGIS extension
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
 
-        # Create all tables
+        # Import all models here to ensure they are registered
+        from app.models import (
+            User, Quest, Listing, Bid, Transaction, Badge,
+            Chat, ChatMessage, AdminReview, DisposalPoint, Payout
+        )
+
+        # Create all tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)

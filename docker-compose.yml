@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16.5
+    image: postgis/postgis:16-3.5
     container_name: zerobin_db
     ports:
       - "5433:5432"
@@ -13,4 +13,3 @@ services:
 
 volumes:
   pgdata:
-    driver: local

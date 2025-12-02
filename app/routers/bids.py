@@ -1,6 +1,6 @@
-from typing import List
+from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -10,6 +10,9 @@ from app.models.user import User
 from app.models.listing import Listing, ListingStatus
 from app.models.bid import Bid, BidStatus
 from app.schemas.bid import BidCreate, BidUpdate, BidResponse
+from app.services.qr_service import get_qr_service
+from decimal import Decimal
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/bids", tags=["FlashTrade - Bids"])
 
@@ -184,3 +187,195 @@ async def withdraw_bid(
 
     bid.status = BidStatus.WITHDRAWN
     await session.commit()
+
+
+# QR Code schemas for weight confirmation
+class QRGenerateRequest(BaseModel):
+    """Request to generate QR code for weight confirmation"""
+    listing_id: UUID
+
+
+class QRGenerateResponse(BaseModel):
+    """Response with QR code data"""
+    qr_code_url: str = Field(description="Base64 encoded QR code image")
+    qr_data: str = Field(description="Raw QR code data string")
+    expires_at: Optional[str] = Field(None, description="Expiration timestamp")
+
+
+class WeightConfirmRequest(BaseModel):
+    """Request to confirm weight via QR scan"""
+    qr_data: str = Field(description="Scanned QR code data")
+    weight_kg: Decimal = Field(ge=0.01, le=9999.99, description="Confirmed weight in kg")
+
+
+class WeightConfirmResponse(BaseModel):
+    """Response after weight confirmation"""
+    listing_id: UUID
+    weight_kg: Decimal
+    weight_verified: bool
+    message: str
+
+
+@router.post("/{bid_id}/generate-pickup-qr", response_model=QRGenerateResponse)
+async def generate_pickup_qr(
+    bid_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Generate QR code for kabadiwala to scan during pickup.
+    This QR will be used for weight confirmation workflow.
+    """
+    # Get bid
+    result = await session.execute(select(Bid).where(Bid.id == bid_id))
+    bid = result.scalar_one_or_none()
+
+    if not bid:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bid not found",
+        )
+
+    # Get listing
+    listing_result = await session.execute(
+        select(Listing).where(Listing.id == bid.listing_id)
+    )
+    listing = listing_result.scalar_one_or_none()
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
+        )
+
+    # Only seller or accepted kabadiwala can generate QR
+    if listing.seller_id != current_user.id and bid.kabadiwala_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to generate QR for this bid",
+        )
+
+    # Bid must be accepted
+    if bid.status != BidStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only generate QR for accepted bids",
+        )
+
+    # Generate QR code
+    qr_service = get_qr_service()
+    qr_result = qr_service.generate_transaction_qr(
+        transaction_id=str(bid.id),
+        listing_id=str(listing.id),
+        amount=float(bid.offered_price)
+    )
+
+    return QRGenerateResponse(
+        qr_code_url=qr_result["qr_code_url"],
+        qr_data=qr_result["qr_data"],
+        expires_at=qr_result.get("expires_at")
+    )
+
+
+@router.post("/confirm-weight", response_model=WeightConfirmResponse)
+async def confirm_weight_via_qr(
+    weight_data: WeightConfirmRequest,
+    confirm_excessive_weight: bool = Query(False, description="Flag to confirm weight even if it exceeds limits"),
+    current_user: User = Depends(require_kabadiwala),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Kabadiwala scans QR code and confirms the weight of e-waste during pickup.
+    This marks the listing as picked up with verified weight.
+    """
+    qr_service = get_qr_service()
+
+    # Parse QR data
+    parsed_qr = qr_service.parse_qr_data(weight_data.qr_data)
+
+    if not parsed_qr or parsed_qr.get("type") != "transaction":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid QR code data",
+        )
+
+    listing_id = UUID(parsed_qr["listing_id"])
+    bid_id = UUID(parsed_qr["transaction_id"])
+
+    # Get listing
+    listing_result = await session.execute(
+        select(Listing).where(Listing.id == listing_id)
+    )
+    listing = listing_result.scalar_one_or_none()
+
+    if not listing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Listing not found",
+        )
+
+    # Get bid
+    bid_result = await session.execute(select(Bid).where(Bid.id == bid_id))
+    bid = bid_result.scalar_one_or_none()
+
+    if not bid:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bid not found",
+        )
+
+    # Verify kabadiwala is the one who won the bid
+    if bid.kabadiwala_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the winning kabadiwala can confirm weight",
+        )
+
+    # Verify bid is accepted
+    if bid.status != BidStatus.ACCEPTED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This bid is not accepted",
+        )
+
+    # Weight Verification Logic
+    # Define reasonable weight ranges (in kg)
+    WEIGHT_LIMITS = {
+        "laptop": {"max": 3.0},
+        "monitor": {"max": 12.0},
+        "mobile": {"max": 0.2},
+        "tablet": {"max": 0.8},
+        "desktop": {"max": 15.0},
+    }
+
+    device_type = listing.device_type.value
+    weight_limit = WEIGHT_LIMITS.get(device_type, {}).get("max")
+
+    message = f"Weight confirmed: {weight_data.weight_kg} kg. Listing marked as picked up."
+
+    if weight_limit:
+        # Check if weight is > 20% above max
+        threshold = Decimal(str(weight_limit)) * Decimal("1.2")
+        if weight_data.weight_kg > threshold:
+            if not confirm_excessive_weight:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Reported weight ({weight_data.weight_kg} kg) is significantly above average for this device type (max expected ~{weight_limit} kg). Please confirm if this is correct.",
+                )
+            else:
+                message += f" (Note: Weight exceeded average limit of {weight_limit} kg)"
+
+    # Update listing with weight and mark as picked up
+    listing.weight_kg = weight_data.weight_kg
+    listing.weight_verified = True
+    listing.status = ListingStatus.PICKED_UP
+
+    await session.commit()
+    await session.refresh(listing)
+
+    return WeightConfirmResponse(
+        listing_id=listing.id,
+        weight_kg=listing.weight_kg,
+        weight_verified=listing.weight_verified,
+        message=message
+    )

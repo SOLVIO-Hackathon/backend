@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, badges, ratings
 
 
 @asynccontextmanager
@@ -14,9 +14,9 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler"""
     # Startup
     print("🚀 Starting Zerobin API...")
-    # Uncomment to auto-create tables (use Alembic in production)
-    # await init_db()
-    print("✅ Database connected")
+    # Initialize database and create tables if they don't exist
+    await init_db()
+    print("✅ Database connected and tables created")
     yield
     # Shutdown
     print("👋 Shutting down Zerobin API...")
@@ -59,6 +59,8 @@ api_v1 = FastAPI(
         {"name": "CleanQuests", "description": "Gamified waste cleanup missions"},
         {"name": "FlashTrade", "description": "E-waste marketplace listings"},
         {"name": "FlashTrade - Bids", "description": "Bidding system for e-waste"},
+        {"name": "Reputation & Badges", "description": "Badge award system and achievements"},
+        {"name": "Reputation & Ratings", "description": "Kabadiwala rating and review system"},
         {"name": "Payments", "description": "Stripe payment integration"},
         {"name": "Payouts", "description": "Payout workflow for completed transactions"},
         {"name": "In-App Chat", "description": "Messaging system with deal confirmation lock"},
@@ -116,6 +118,8 @@ api_v1.include_router(auth.router)
 api_v1.include_router(quests.router)
 api_v1.include_router(listings.router)
 api_v1.include_router(bids.router)
+api_v1.include_router(badges.router)
+api_v1.include_router(ratings.router)
 api_v1.include_router(payments.router)
 api_v1.include_router(payouts.router)
 api_v1.include_router(chat.router)

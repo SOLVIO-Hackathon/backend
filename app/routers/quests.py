@@ -5,7 +5,8 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from geoalchemy2.functions import ST_SetSRID, ST_Point, ST_X, ST_Y, ST_Distance
+from sqlalchemy.orm import selectinload
+from geoalchemy2.functions import ST_SetSRID, ST_Point, ST_X, ST_Y, ST_Distance, ST_AsGeoJSON
 import pygeohash as geohash
 
 from app.core.database import get_async_session
@@ -15,7 +16,14 @@ from app.models.user import User
 from app.models.quest import Quest, QuestStatus
 from app.models.transaction import Transaction, TransactionType, PaymentMethod, PaymentStatus
 from app.models.disposal_point import DisposalPoint
-from app.schemas.quest import QuestCreate, QuestUpdate, QuestResponse, QuestList
+from app.schemas.quest import (
+    QuestCreate,
+    QuestUpdate,
+    QuestResponse,
+    QuestList,
+    ImageAnalysisRequest,
+    ImageAnalysisResponse
+)
 from app.utils.duplicate_detection import is_potential_duplicate
 from app.services.ai_service import get_ai_service
 from app.services.qr_service import get_qr_service
@@ -110,7 +118,11 @@ async def list_quests(
     session: AsyncSession = Depends(get_async_session),
 ):
     """List all quests with optional filters"""
-    query = select(Quest)
+    # Eagerly load relationships to avoid lazy loading issues
+    query = select(Quest).options(
+        selectinload(Quest.reporter),
+        selectinload(Quest.collector)
+    )
 
     if status_filter:
         query = query.where(Quest.status == status_filter)
@@ -131,6 +143,35 @@ async def list_quests(
     return QuestList(items=quests, total=total, skip=skip, limit=limit)
 
 
+@router.get("/nearby", response_model=List[QuestResponse])
+async def get_nearby_quests(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(5.0, gt=0, le=50),
+    current_user: User = Depends(require_collector),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Get quests near a location (for collectors).
+    Uses PostGIS for efficient spatial queries.
+    """
+    # Convert radius to meters for PostGIS
+    radius_meters = radius_km * 1000
+    user_point = ST_SetSRID(ST_Point(longitude, latitude), 4326)
+
+    query = select(Quest).where(
+        Quest.status == QuestStatus.REPORTED,
+        ST_Distance(Quest.location, user_point) <= radius_meters
+    ).order_by(
+        ST_Distance(Quest.location, user_point)
+    ).limit(20)
+
+    result = await session.execute(query)
+    quests = result.scalars().all()
+
+    return quests
+
+
 @router.get("/{quest_id}", response_model=QuestResponse)
 async def get_quest(
     quest_id: UUID,
@@ -138,7 +179,12 @@ async def get_quest(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Get a specific quest by ID"""
-    result = await session.execute(select(Quest).where(Quest.id == quest_id))
+    result = await session.execute(
+        select(Quest).options(
+            selectinload(Quest.reporter),
+            selectinload(Quest.collector)
+        ).where(Quest.id == quest_id)
+    )
     quest = result.scalar_one_or_none()
 
     if not quest:
@@ -447,35 +493,6 @@ async def update_quest(
     return quest
 
 
-@router.get("/nearby", response_model=List[QuestResponse])
-async def get_nearby_quests(
-    latitude: float = Query(..., ge=-90, le=90),
-    longitude: float = Query(..., ge=-180, le=180),
-    radius_km: float = Query(5.0, gt=0, le=50),
-    current_user: User = Depends(require_collector),
-    session: AsyncSession = Depends(get_async_session),
-):
-    """
-    Get quests near a location (for collectors).
-    Uses PostGIS for efficient spatial queries.
-    """
-    # Convert radius to meters for PostGIS
-    radius_meters = radius_km * 1000
-    user_point = ST_SetSRID(ST_Point(longitude, latitude), 4326)
-
-    query = select(Quest).where(
-        Quest.status == QuestStatus.REPORTED,
-        ST_Distance(Quest.location, user_point) <= radius_meters
-    ).order_by(
-        ST_Distance(Quest.location, user_point)
-    ).limit(20)
-
-    result = await session.execute(query)
-    quests = result.scalars().all()
-
-    return quests
-
-
 @router.get("/{quest_id}/disposal-route", response_model=List[dict])
 async def get_quest_disposal_route(
     quest_id: UUID,
@@ -560,3 +577,51 @@ async def get_quest_disposal_route(
             })
 
     return routes
+
+
+@router.post("/analyze-image", response_model=ImageAnalysisResponse)
+async def analyze_image(
+    request: ImageAnalysisRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Analyze a waste image using AI to extract non-deterministic insights.
+
+    This endpoint uses Gemini 2.5 Flash with LangChain and PydanticOutputParser
+    to extract:
+    - Description of the waste
+    - Waste type classification
+    - Severity assessment
+    - Confidence score
+
+    Note: Deterministic values like bounty points are calculated on the backend
+    using the bounty_map, not extracted from AI.
+    """
+    ai_service = get_ai_service()
+
+    try:
+        # Get AI classification using the existing classify_waste method
+        classification = await ai_service.classify_waste(
+            image_url=request.image_url,
+            additional_context=None
+        )
+
+        # Generate a concise description from detected items
+        items_str = ", ".join(classification.detected_items[:3])
+        description = f"{classification.estimated_volume} of {items_str}"
+        if len(classification.detected_items) > 3:
+            description += f" and {len(classification.detected_items) - 3} more items"
+
+        # Return only non-deterministic insights
+        return ImageAnalysisResponse(
+            description=description,
+            waste_type=classification.waste_type.value,
+            severity=classification.severity.value,
+            confidence_score=classification.confidence_score
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to analyze image: {str(e)}"
+        )

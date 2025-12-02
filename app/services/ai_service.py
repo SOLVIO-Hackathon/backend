@@ -1,6 +1,5 @@
 """AI service using Langchain and Google Gemini 2.5 Flash for structured outputs"""
 
-import os
 import base64
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -10,6 +9,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from app.core.config import settings
 from app.schemas.ai_outputs import (
     WasteClassificationOutput,
     EWasteClassificationOutput,
@@ -22,7 +22,7 @@ class GeminiAIService:
 
     def __init__(self):
         """Initialize Gemini AI service with Langchain"""
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.api_key = settings.GOOGLE_API_KEY
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set")
 
@@ -73,7 +73,7 @@ class GeminiAIService:
                 """You are an expert waste classification AI. Analyze images of waste and provide detailed,
                 accurate classifications. Consider volume, type, severity, and potential hazards.
 
-                Your task is to classify waste into categories (organic, recyclable, general, e_waste),
+                Your task is to classify waste into categories (organic, recyclable, mixed, e_waste),
                 assess severity (low, medium, high), and recommend appropriate bounty points for cleanup.
 
                 {format_instructions}"""

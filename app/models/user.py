@@ -41,6 +41,37 @@ class User(Base):
     reputation_score: Mapped[float] = mapped_column(Float, default=0.0)
     total_transactions: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Collector-specific fields
+    collector_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default="available"
+    )
+    max_concurrent_quests: Mapped[int] = mapped_column(
+        Integer, default=3
+    )
+    current_location_lat: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    current_location_lng: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    last_location_update: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    # Fraud detection fields
+    fraud_risk_score: Mapped[float] = mapped_column(
+        Float, default=0.0
+    )
+    total_quests_completed: Mapped[int] = mapped_column(
+        Integer, default=0
+    )
+    total_quests_rejected: Mapped[int] = mapped_column(
+        Integer, default=0
+    )
+    last_fraud_check: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -62,6 +93,10 @@ class User(Base):
     bids: Mapped[List["Bid"]] = relationship("Bid", back_populates="kabadiwala")
     transactions: Mapped[List["Transaction"]] = relationship("Transaction", back_populates="user")
     badges: Mapped[List["Badge"]] = relationship("Badge", back_populates="user")
+    notifications: Mapped[List["Notification"]] = relationship("Notification", back_populates="user")
+    behavior_patterns: Mapped[List["CollectorBehaviorPattern"]] = relationship(
+        "CollectorBehaviorPattern", back_populates="collector"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email} ({self.user_type})>"

@@ -18,7 +18,7 @@ FastAPI backend for the Zerobin waste management platform with gamified cleanup 
 - Kabadiwalas bid on listings
 - In-app secure chat (locked until deal confirmed)
 - Weight verification system
-- Instant payment integration (bKash/Nagad)
+- Instant payment integration (Stripe)
 
 ### 3. God View Dashboard
 - Real-time heatmap of waste reports

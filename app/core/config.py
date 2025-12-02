@@ -81,7 +81,7 @@ settings = Settings()
 
 # Debug: Print loaded config on import
 if settings.DEBUG:
-    print(f"✅ Loaded .env from: {ENV_FILE}")
+    print(f"[OK] Loaded .env from: {ENV_FILE}")
     print(f"   DATABASE_URL: {settings.DATABASE_URL}")
     print(f"   SECRET_KEY: {settings.SECRET_KEY[:20]}...")
     print(f"   CORS_ORIGINS: {settings.BACKEND_CORS_ORIGINS}")

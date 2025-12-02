@@ -13,7 +13,12 @@ from app.schemas.payment import (
     PublishableKeyResponse,
 )
 from app.models.user import User
+from app.models.transaction import Transaction, PaymentStatus, TransactionType, PaymentMethod
+from app.models.quest import Quest, QuestStatus
+from app.models.listing import Listing, ListingStatus
 from app.core.auth import get_current_active_user
+from uuid import UUID
+from sqlalchemy import select
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 stripe_service = StripeService()
@@ -170,44 +175,251 @@ async def stripe_webhook(
         # Handle successful payment
         payment_intent_id = event_data["id"]
         amount = event_data["amount"]
+        currency = event_data.get("currency", "usd")
         metadata = event_data.get("metadata", {})
 
-        # TODO: Update transaction status in database
-        # TODO: Update quest/listing status if applicable
-        # TODO: Notify user of successful payment
+        # Find and update transaction in database
+        result = db.execute(
+            select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id)
+        )
+        transaction = result.scalar_one_or_none()
 
-        print(f"✅ Payment succeeded: {payment_intent_id} - Amount: {amount}")
+        if transaction:
+            # Update transaction status to completed
+            transaction.payment_status = PaymentStatus.COMPLETED
+            db.commit()
+            db.refresh(transaction)
+
+            # Update quest/listing status if applicable
+            if transaction.quest_id:
+                # Update quest status to completed (payment received)
+                quest_result = db.execute(
+                    select(Quest).where(Quest.id == transaction.quest_id)
+                )
+                quest = quest_result.scalar_one_or_none()
+                if quest and quest.status == QuestStatus.VERIFIED:
+                    quest.status = QuestStatus.COMPLETED
+                    db.commit()
+
+            elif transaction.listing_id:
+                # Update listing status to completed (payment received)
+                listing_result = db.execute(
+                    select(Listing).where(Listing.id == transaction.listing_id)
+                )
+                listing = listing_result.scalar_one_or_none()
+                if listing and listing.status == ListingStatus.PICKED_UP:
+                    listing.status = ListingStatus.COMPLETED
+                    db.commit()
+
+            print(f"✅ Payment succeeded: {payment_intent_id} - Amount: {amount/100} {currency.upper()}")
+            print(f"   Transaction {transaction.id} marked as COMPLETED")
+        else:
+            # Create new transaction record if it doesn't exist
+            user_id = metadata.get("user_id")
+            if user_id:
+                try:
+                    # Determine transaction type from metadata
+                    transaction_type = TransactionType.E_WASTE_SALE
+                    quest_id = metadata.get("quest_id")
+                    listing_id = metadata.get("listing_id")
+
+                    if quest_id:
+                        transaction_type = TransactionType.QUEST_COMPLETION
+
+                    new_transaction = Transaction(
+                        transaction_type=transaction_type,
+                        user_id=UUID(user_id),
+                        quest_id=UUID(quest_id) if quest_id else None,
+                        listing_id=UUID(listing_id) if listing_id else None,
+                        amount=amount / 100,  # Convert from cents
+                        currency=currency.upper(),
+                        payment_method=PaymentMethod.STRIPE,
+                        payment_status=PaymentStatus.COMPLETED,
+                        stripe_payment_intent_id=payment_intent_id,
+                        notes=f"Payment completed via Stripe webhook"
+                    )
+                    db.add(new_transaction)
+                    db.commit()
+                    print(f"✅ Created new transaction record for payment: {payment_intent_id}")
+                except Exception as e:
+                    print(f"❌ Error creating transaction record: {e}")
+                    db.rollback()
 
     elif event_type == "payment_intent.payment_failed":
         # Handle failed payment
         payment_intent_id = event_data["id"]
-        error_message = event_data.get("last_payment_error", {}).get("message")
+        error_message = event_data.get("last_payment_error", {}).get("message", "Unknown error")
+        metadata = event_data.get("metadata", {})
 
-        # TODO: Update transaction status to failed
-        # TODO: Notify user of failed payment
+        # Find and update transaction in database
+        result = db.execute(
+            select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id)
+        )
+        transaction = result.scalar_one_or_none()
 
-        print(f"❌ Payment failed: {payment_intent_id} - Error: {error_message}")
+        if transaction:
+            # Update transaction status to failed
+            transaction.payment_status = PaymentStatus.FAILED
+            transaction.notes = f"Payment failed: {error_message}"
+            db.commit()
+            db.refresh(transaction)
+
+            print(f"❌ Payment failed: {payment_intent_id}")
+            print(f"   Transaction {transaction.id} marked as FAILED")
+            print(f"   Error: {error_message}")
+        else:
+            # Create failed transaction record
+            user_id = metadata.get("user_id")
+            if user_id:
+                try:
+                    transaction_type = TransactionType.E_WASTE_SALE
+                    quest_id = metadata.get("quest_id")
+                    listing_id = metadata.get("listing_id")
+
+                    if quest_id:
+                        transaction_type = TransactionType.QUEST_COMPLETION
+
+                    new_transaction = Transaction(
+                        transaction_type=transaction_type,
+                        user_id=UUID(user_id),
+                        quest_id=UUID(quest_id) if quest_id else None,
+                        listing_id=UUID(listing_id) if listing_id else None,
+                        amount=event_data.get("amount", 0) / 100,
+                        currency=event_data.get("currency", "BDT").upper(),
+                        payment_method=PaymentMethod.STRIPE,
+                        payment_status=PaymentStatus.FAILED,
+                        stripe_payment_intent_id=payment_intent_id,
+                        notes=f"Payment failed: {error_message}"
+                    )
+                    db.add(new_transaction)
+                    db.commit()
+                    print(f"❌ Created failed transaction record: {payment_intent_id}")
+                except Exception as e:
+                    print(f"❌ Error creating failed transaction record: {e}")
+                    db.rollback()
 
     elif event_type == "checkout.session.completed":
         # Handle completed checkout session
         session_id = event_data["id"]
-        payment_intent = event_data.get("payment_intent")
+        payment_intent_id = event_data.get("payment_intent")
+        amount = event_data.get("amount_total", 0)
+        currency = event_data.get("currency", "BDT")
         metadata = event_data.get("metadata", {})
 
-        # TODO: Update transaction and related records
-        # TODO: Send confirmation email
+        # Find transaction by checkout session ID
+        result = db.execute(
+            select(Transaction).where(Transaction.stripe_checkout_session_id == session_id)
+        )
+        transaction = result.scalar_one_or_none()
 
-        print(f"✅ Checkout completed: {session_id} - PI: {payment_intent}")
+        if transaction:
+            # Update transaction with payment intent ID and mark as completed
+            transaction.stripe_payment_intent_id = payment_intent_id
+            transaction.payment_status = PaymentStatus.COMPLETED
+            db.commit()
+            db.refresh(transaction)
+
+            # Update quest/listing status
+            if transaction.quest_id:
+                quest_result = db.execute(
+                    select(Quest).where(Quest.id == transaction.quest_id)
+                )
+                quest = quest_result.scalar_one_or_none()
+                if quest and quest.status == QuestStatus.VERIFIED:
+                    quest.status = QuestStatus.COMPLETED
+                    db.commit()
+
+            elif transaction.listing_id:
+                listing_result = db.execute(
+                    select(Listing).where(Listing.id == transaction.listing_id)
+                )
+                listing = listing_result.scalar_one_or_none()
+                if listing and listing.status == ListingStatus.PICKED_UP:
+                    listing.status = ListingStatus.COMPLETED
+                    db.commit()
+
+            print(f"✅ Checkout completed: {session_id}")
+            print(f"   Transaction {transaction.id} marked as COMPLETED")
+            print(f"   Payment Intent: {payment_intent_id}")
+        else:
+            # Create new transaction from checkout session
+            user_id = metadata.get("user_id")
+            if user_id:
+                try:
+                    transaction_type = TransactionType.E_WASTE_SALE
+                    quest_id = metadata.get("quest_id")
+                    listing_id = metadata.get("listing_id")
+
+                    if quest_id:
+                        transaction_type = TransactionType.QUEST_COMPLETION
+
+                    new_transaction = Transaction(
+                        transaction_type=transaction_type,
+                        user_id=UUID(user_id),
+                        quest_id=UUID(quest_id) if quest_id else None,
+                        listing_id=UUID(listing_id) if listing_id else None,
+                        amount=amount / 100,
+                        currency=currency.upper(),
+                        payment_method=PaymentMethod.STRIPE,
+                        payment_status=PaymentStatus.COMPLETED,
+                        stripe_payment_intent_id=payment_intent_id,
+                        stripe_checkout_session_id=session_id,
+                        notes="Payment completed via Stripe Checkout"
+                    )
+                    db.add(new_transaction)
+                    db.commit()
+                    print(f"✅ Created transaction from checkout: {session_id}")
+                except Exception as e:
+                    print(f"❌ Error creating transaction from checkout: {e}")
+                    db.rollback()
 
     elif event_type == "charge.refunded":
         # Handle refund
         charge_id = event_data["id"]
         amount_refunded = event_data["amount_refunded"]
+        payment_intent_id = event_data.get("payment_intent")
+        currency = event_data.get("currency", "BDT")
 
-        # TODO: Update transaction status to refunded
-        # TODO: Notify user of refund
+        # Find transaction by payment intent
+        if payment_intent_id:
+            result = db.execute(
+                select(Transaction).where(Transaction.stripe_payment_intent_id == payment_intent_id)
+            )
+            transaction = result.scalar_one_or_none()
 
-        print(f"💰 Refund processed: {charge_id} - Amount: {amount_refunded}")
+            if transaction:
+                # Update transaction status to refunded
+                transaction.payment_status = PaymentStatus.REFUNDED
+                transaction.notes = f"Refunded: {amount_refunded / 100} {currency.upper()}"
+                db.commit()
+                db.refresh(transaction)
+
+                # Optionally revert quest/listing status
+                if transaction.quest_id:
+                    quest_result = db.execute(
+                        select(Quest).where(Quest.id == transaction.quest_id)
+                    )
+                    quest = quest_result.scalar_one_or_none()
+                    if quest and quest.status == QuestStatus.COMPLETED:
+                        quest.status = QuestStatus.VERIFIED  # Revert to verified
+                        db.commit()
+
+                elif transaction.listing_id:
+                    listing_result = db.execute(
+                        select(Listing).where(Listing.id == transaction.listing_id)
+                    )
+                    listing = listing_result.scalar_one_or_none()
+                    if listing and listing.status == ListingStatus.COMPLETED:
+                        listing.status = ListingStatus.PICKED_UP  # Revert to picked up
+                        db.commit()
+
+                print(f"💰 Refund processed: {charge_id}")
+                print(f"   Transaction {transaction.id} marked as REFUNDED")
+                print(f"   Amount: {amount_refunded / 100} {currency.upper()}")
+            else:
+                print(f"💰 Refund processed but no matching transaction found: {charge_id}")
+        else:
+            print(f"💰 Refund processed without payment intent: {charge_id}")
 
     else:
         print(f"ℹ️ Unhandled event type: {event_type}")

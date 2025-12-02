@@ -1,8 +1,9 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from geoalchemy2.shape import to_shape
 
 from app.models.listing import DeviceType, DeviceCondition, ListingStatus
 from app.schemas.common import LocationSchema
@@ -73,6 +74,28 @@ class ListingResponse(BaseModel):
     updated_at: datetime
     seller: Optional[UserPublic] = None
     buyer: Optional[UserPublic] = None
+
+    @field_validator('location', mode='before')
+    @classmethod
+    def convert_location_to_geojson(cls, v: Any) -> dict:
+        """Convert PostGIS WKBElement to GeoJSON dict"""
+        if v is None:
+            return {}
+
+        # If already a dict, return as-is
+        if isinstance(v, dict):
+            return v
+
+        # Convert WKBElement to shapely geometry, then to GeoJSON
+        try:
+            shape = to_shape(v)
+            return {
+                "type": "Point",
+                "coordinates": [shape.x, shape.y]
+            }
+        except Exception:
+            # Fallback: return empty dict if conversion fails
+            return {}
 
     model_config = {
         "from_attributes": True,

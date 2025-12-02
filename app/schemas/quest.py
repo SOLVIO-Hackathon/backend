@@ -1,7 +1,9 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from geoalchemy2.elements import WKBElement
+from geoalchemy2.shape import to_shape
 
 from app.models.quest import WasteType, Severity, QuestStatus
 from app.schemas.common import LocationSchema
@@ -73,6 +75,19 @@ class QuestResponse(BaseModel):
     reporter: Optional[UserPublic] = None
     collector: Optional[UserPublic] = None
 
+    @field_validator('location', mode='before')
+    @classmethod
+    def validate_location(cls, value: Any) -> dict:
+        """Convert WKBElement to GeoJSON dict"""
+        if isinstance(value, WKBElement):
+            # Convert WKBElement to Shapely geometry
+            point = to_shape(value)
+            return {
+                "type": "Point",
+                "coordinates": [point.x, point.y]
+            }
+        return value
+
     model_config = {
         "from_attributes": True,
         "json_schema_extra": {
@@ -108,6 +123,38 @@ class QuestVerificationRequest(BaseModel):
             "example": {
                 "status": "verified",
                 "verification_notes": "Photos verified, cleanup completed successfully"
+            }
+        }
+    }
+
+
+class ImageAnalysisRequest(BaseModel):
+    """Schema for image analysis request"""
+    image_url: str = Field(..., description="URL of the waste photo to analyze")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "image_url": "https://storage.example.com/waste-photos/abc123.jpg"
+            }
+        }
+    }
+
+
+class ImageAnalysisResponse(BaseModel):
+    """Schema for AI-generated image analysis response (non-deterministic insights only)"""
+    description: str = Field(..., description="AI-generated detailed description of the waste")
+    waste_type: WasteType = Field(..., description="AI-classified waste type")
+    severity: Severity = Field(..., description="AI-assessed severity level")
+    confidence_score: float = Field(..., description="AI confidence score (0.0 to 1.0)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "description": "Large accumulation of plastic bottles, bags, and food containers scattered across the area",
+                "waste_type": "recyclable",
+                "severity": "high",
+                "confidence_score": 0.92
             }
         }
     }
