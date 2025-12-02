@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, agent
 
 
 @asynccontextmanager
@@ -66,6 +66,7 @@ api_v1 = FastAPI(
     openapi_url="/openapi.json",
     openapi_tags=[
         {"name": "Authentication", "description": "User registration and login"},
+        {"name": "ReAct Agent", "description": "Conversational AI agent for quest creation and data queries"},
         {"name": "CleanQuests", "description": "Gamified waste cleanup missions"},
         {"name": "Collectors", "description": "Collector availability and workload management"},
         {"name": "Notifications", "description": "In-app notification system"},
@@ -128,6 +129,7 @@ api_v1.openapi = custom_openapi
 # Include routers in v1
 api_v1.include_router(health.router)
 api_v1.include_router(auth.router)
+api_v1.include_router(agent.router)  # ReAct Agent
 api_v1.include_router(quests.router)
 api_v1.include_router(collectors.router)
 api_v1.include_router(notifications.router)
