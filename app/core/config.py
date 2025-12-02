@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Google Gemini API
     GOOGLE_API_KEY: str
 
+    # External Price Prediction API
+    PRICE_PREDICTION_API_URL: str = "https://7cf7fa5eb76d.ngrok-free.app/price-prediction/predict"
+
     # File Upload
     MAX_UPLOAD_SIZE: int
     ALLOWED_EXTENSIONS: List[str]

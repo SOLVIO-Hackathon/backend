@@ -4,15 +4,14 @@ Calls external API for price prediction
 """
 
 import logging
-import httpx
 from typing import Optional
 from decimal import Decimal
 from pydantic import BaseModel
+import httpx
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# External price prediction API configuration
-PRICE_PREDICTION_API_URL = "https://7cf7fa5eb76d.ngrok-free.app/price-prediction/predict"
 
 
 class PricePredictionRequest(BaseModel):
@@ -37,7 +36,7 @@ class ExternalPricePredictionService:
     """Service to call external price prediction API"""
 
     def __init__(self):
-        self.api_url = PRICE_PREDICTION_API_URL
+        self.api_url = settings.PRICE_PREDICTION_API_URL
         self.timeout = 10.0  # 10 seconds timeout
 
     async def predict_price(

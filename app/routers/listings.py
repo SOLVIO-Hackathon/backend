@@ -1,5 +1,6 @@
 from typing import Optional
 from uuid import UUID
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -21,6 +22,7 @@ from app.services.external_price_prediction import get_external_price_prediction
 from pydantic import BaseModel, HttpUrl
 
 router = APIRouter(prefix="/listings", tags=["FlashTrade"])
+logger = logging.getLogger(__name__)
 
 
 class AnalyzeRequest(BaseModel):
@@ -60,7 +62,7 @@ async def create_listing(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Create a new e-waste listing with AI-powered valuation (available to all user types)"""
-    print(f"Creating listing for user: {current_user.email} (type: {current_user.user_type.value})")
+    logger.info(f"Creating listing for user: {current_user.email} (type: {current_user.user_type.value})")
 
     # Call AI service to estimate value from the first image
     ai_service = get_ai_service()
@@ -100,7 +102,7 @@ async def create_listing(
 
     except Exception as e:
         # Fallback to default values if AI service fails
-        print(f"AI valuation failed: {e}")
+        logger.warning(f"AI valuation failed: {e}")
         estimated_min = 1000.0
         estimated_max = 1500.0
         ai_classification = {"error": str(e)}
@@ -117,6 +119,7 @@ async def create_listing(
     ]):
         try:
             # Map device condition to numeric value (1-10 scale)
+            # NOT_WORKING devices get lower score, WORKING get higher score
             condition_mapping = {
                 DeviceCondition.NOT_WORKING: 3,
                 DeviceCondition.PARTIALLY_WORKING: 6,
@@ -124,7 +127,7 @@ async def create_listing(
             }
             condition_numeric = condition_mapping.get(listing_data.condition, 7)
 
-            # Map device type to product type string
+            # Map device type to product type string (capitalized for API)
             product_type_mapping = {
                 "laptop": "Laptop",
                 "desktop": "Desktop",
@@ -152,12 +155,12 @@ async def create_listing(
 
             if predicted_price is not None:
                 base_price = predicted_price
-                print(f"Price prediction successful: base_price = {base_price}")
+                logger.info(f"Price prediction successful: base_price = {base_price}")
             else:
-                print("Price prediction API returned None")
+                logger.warning("Price prediction API returned None")
 
         except Exception as e:
-            print(f"Price prediction failed: {e}")
+            logger.error(f"Price prediction failed: {e}")
             # Continue without base_price
 
     listing = Listing(
