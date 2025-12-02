@@ -29,3 +29,6 @@ db.sqlite3
 
 E-waste  Price models/
 E-waste category/
+*.zip
+*.h5
+*.pkl
