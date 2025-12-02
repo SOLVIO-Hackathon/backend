@@ -69,6 +69,23 @@ class Settings(BaseSettings):
     DEFAULT_QUEST_BOUNTY_GENERAL: int
     COMMISSION_RATE_PERCENT: float
 
+    # Automatic Assignment
+    AUTO_ASSIGNMENT_ENABLED: bool = True
+    MAX_COLLECTOR_SEARCH_RADIUS_KM: float = 50.0
+    COLLECTOR_LOCATION_STALE_MINUTES: int = 60
+    DEFAULT_MAX_CONCURRENT_QUESTS: int = 3
+
+    # Fraud Detection
+    FRAUD_ANALYSIS_WINDOW_DAYS: int = 7
+    FRAUD_MIN_QUESTS_FOR_ANALYSIS: int = 3
+    FRAUD_SUSPICIOUS_COMPLETION_TIME_MINUTES: int = 5
+    FRAUD_MAX_QUESTS_PER_HOUR_THRESHOLD: int = 5
+    FRAUD_HIGH_RISK_THRESHOLD: float = 0.7
+
+    # Dynamic AI Thresholds
+    AI_THRESHOLD_LOW_RISK_ADJUSTMENT: float = -0.10
+    AI_THRESHOLD_HIGH_RISK_ADJUSTMENT: float = 0.15
+
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",

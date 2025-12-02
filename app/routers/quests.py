@@ -28,6 +28,9 @@ from app.utils.duplicate_detection import is_potential_duplicate
 from app.services.ai_service import get_ai_service
 from app.services.qr_service import get_qr_service
 from app.services.routing_service import get_routing_service
+from app.services.assignment_service import get_assignment_service
+from app.services.fraud_detection_service import get_fraud_detection_service
+from app.services.notification_service import get_notification_service
 from app.utils.exif_extraction import compare_metadata
 from app.routers.admin_review import auto_flag_low_confidence_quest
 
@@ -106,6 +109,34 @@ async def create_quest(
     await session.commit()
     await session.refresh(quest)
 
+    # ✅ NEW FEATURE: AUTOMATIC ASSIGNMENT
+    # Try to automatically assign the quest to the best available collector
+    if settings.AUTO_ASSIGNMENT_ENABLED:
+        assignment_service = get_assignment_service()
+        assigned_collector, assignment_msg = await assignment_service.assign_collector_to_quest(
+            quest, session
+        )
+        
+        if assigned_collector:
+            # Notify the assigned collector
+            notification_service = get_notification_service()
+            await notification_service.notify_quest_assigned(quest, assigned_collector, session)
+            await session.commit()
+            
+            # Return quest with assignment info as proper dict
+            from app.schemas.quest import QuestResponse
+            quest_dict = QuestResponse.model_validate(quest).model_dump()
+            quest_dict["assignment_status"] = "assigned"
+            quest_dict["message"] = assignment_msg
+            return quest_dict
+        else:
+            # No collector found - quest stays in REPORTED status
+            from app.schemas.quest import QuestResponse
+            quest_dict = QuestResponse.model_validate(quest).model_dump()
+            quest_dict["assignment_status"] = "pending"
+            quest_dict["message"] = assignment_msg
+            return quest_dict
+    
     return quest
 
 
@@ -304,6 +335,18 @@ async def complete_quest(
     quest.status = QuestStatus.COMPLETED
     quest.completed_at = datetime.utcnow()
 
+    # ✅ NEW FEATURE: BEHAVIORAL FRAUD DETECTION
+    # Analyze collector's behavior patterns to calculate fraud risk
+    fraud_service = get_fraud_detection_service()
+    behavior_pattern = await fraud_service.analyze_collector_behavior(
+        current_user.id, session
+    )
+    
+    # Get dynamic AI threshold based on fraud risk
+    dynamic_threshold = fraud_service.get_dynamic_ai_threshold(
+        current_user.fraud_risk_score
+    )
+
     # ✅ FEATURE 2: AI VERIFICATION WORKFLOW
     ai_service = get_ai_service()
 
@@ -329,8 +372,8 @@ async def complete_quest(
         quest.ai_verification_score = verification_result.confidence_score
         quest.verification_notes = f"AI: {verification_result.verification_decision}\n{verification_result.detailed_analysis}"
 
-        # Auto-approve if high confidence, flag for review if low
-        if verification_result.confidence_score >= settings.AI_VERIFICATION_CONFIDENCE_THRESHOLD:
+        # Auto-approve if confidence meets DYNAMIC threshold (not static)
+        if verification_result.confidence_score >= dynamic_threshold:
             quest.status = QuestStatus.VERIFIED
             quest.verified_at = datetime.utcnow()
 
@@ -351,6 +394,10 @@ async def complete_quest(
             # Update collector reputation
             current_user.reputation_score += 1.0
             current_user.total_transactions += 1
+            
+            # ✅ NEW: Notify collector of verification
+            notification_service = get_notification_service()
+            await notification_service.notify_quest_verified(quest, current_user, session)
 
             verification_message = "✅ Quest verified and bounty awarded!"
         else:
@@ -358,6 +405,8 @@ async def complete_quest(
             # Low confidence - automatically flag for admin review
             ai_notes = f"Verification Decision: {verification_result.verification_decision}\n"
             ai_notes += f"Detailed Analysis: {verification_result.detailed_analysis}\n"
+            ai_notes += f"Dynamic Threshold: {dynamic_threshold:.2f} (Fraud Risk: {current_user.fraud_risk_score:.2f})\n"
+            ai_notes += f"Behavioral Analysis: {behavior_pattern.fraud_flags}\n"
             if verification_result.fraud_indicators:
                 ai_notes += f"Fraud Indicators: {', '.join(verification_result.fraud_indicators)}"
 
@@ -367,6 +416,13 @@ async def complete_quest(
                 ai_notes=ai_notes,
                 session=session
             )
+            
+            # ✅ NEW: Alert admins if very high fraud risk
+            notification_service = get_notification_service()
+            if current_user.fraud_risk_score >= settings.FRAUD_HIGH_RISK_THRESHOLD:
+                await notification_service.notify_fraud_alert(
+                    current_user, current_user.fraud_risk_score, session
+                )
 
             verification_message = "⚠️ Quest completed but flagged for admin review due to low AI confidence."
 
@@ -449,8 +505,15 @@ async def complete_quest(
         "verification": {
             "status": quest.status.value,
             "confidence_score": quest.ai_verification_score,
+            "dynamic_threshold": dynamic_threshold,
+            "fraud_risk_score": current_user.fraud_risk_score,
             "message": verification_message,
-            "metadata_check": metadata_check
+            "metadata_check": metadata_check,
+            "behavioral_analysis": {
+                "risk_score": behavior_pattern.calculated_risk_score,
+                "fraud_flags": behavior_pattern.fraud_flags,
+                "quests_analyzed": behavior_pattern.quests_completed_count
+            }
         },
         "disposal_routing": {
             "message": f"Found {len(nearest_disposal_points)} nearby disposal points for {quest.waste_type.value} waste",
