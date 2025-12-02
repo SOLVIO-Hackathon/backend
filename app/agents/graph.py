@@ -136,15 +136,11 @@ async def agent_node(state: AgentState, session: AsyncSession, user: User) -> Di
         temperature=0.3,  # Balance between consistency and creativity
     )
     
-    # Get all available tools
+    # Get simple tools that don't need dependency injection
+    # Complex tools (analyze_waste_image, create_quest_in_database) are handled in tools_node
     tools = [
         collect_image_url,
         collect_location,
-        # analyze_waste_image and create_quest_in_database need dependencies
-        # They will be handled specially in tools_node
-        get_my_quests,
-        get_my_transactions,
-        get_quest_statistics,
         search_waste_information,
         check_relevance,
     ]
@@ -165,9 +161,20 @@ async def agent_node(state: AgentState, session: AsyncSession, user: User) -> Di
             context_parts.append(f"Location: {draft.location_lat}, {draft.location_lng}")
         if draft.description:
             context_parts.append(f"Description: {draft.description}")
+            context_parts.append(f"Waste Type: {draft.waste_type}")
+            context_parts.append(f"Severity: {draft.severity}")
+            context_parts.append(f"Bounty Points: {draft.bounty_points}")
         
         if context_parts:
             system_prompt += f"\n\n**Current Quest Draft:**\n" + "\n".join(context_parts)
+    
+    # Add special instructions based on workflow stage
+    if state["workflow_stage"] == "analyzing_image":
+        # We have image and location, tell the agent to proceed with analysis
+        system_prompt += "\n\n**ACTION REQUIRED:** The user has provided both image URL and location. Proceed to analyze the image and show the preview to the user."
+    elif state["workflow_stage"] == "awaiting_confirmation":
+        # We have the analysis, ask for confirmation
+        system_prompt += "\n\n**ACTION REQUIRED:** The image has been analyzed. Show the preview to the user and ask them to confirm (yes/confirm) or restart (no/cancel)."
     
     # Build messages with system prompt
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
@@ -188,13 +195,13 @@ async def agent_node(state: AgentState, session: AsyncSession, user: User) -> Di
 
 async def tools_node(state: AgentState, session: AsyncSession, user: User) -> Dict[str, Any]:
     """
-    Tool execution node - executes tools requested by LLM.
+    Tool execution node - executes tools requested by LLM or performs workflow actions.
     
     This node:
-    1. Extracts tool calls from last message
-    2. Executes each tool with proper dependency injection
-    3. Updates workflow stage based on tool results
-    4. Updates quest draft based on tool results
+    1. Handles workflow-based automatic actions (analyze image, create quest)
+    2. Executes simple tools called by the LLM
+    3. Updates workflow stage based on results
+    4. Updates quest draft based on results
     5. Returns tool responses
     
     Args:
@@ -205,115 +212,172 @@ async def tools_node(state: AgentState, session: AsyncSession, user: User) -> Di
     Returns:
         Updated state dict
     """
-    last_message = state["messages"][-1]
-    
-    # Extract tool calls
-    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
-        return {"messages": []}
-    
     tool_responses = []
     quest_draft = state.get("quest_draft") or QuestDraft()
     workflow_stage = state["workflow_stage"]
     
-    ai_service = get_ai_service()
-    
-    for tool_call in last_message.tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
-        tool_id = tool_call["id"]
-        
+    # Handle workflow-based automatic actions first
+    if workflow_stage == "analyzing_image" and quest_draft.image_url:
+        # Automatically analyze the image
         try:
-            # Execute tool with dependency injection
-            if tool_name == "collect_image_url":
-                result = collect_image_url.invoke(tool_args)
-                if result["success"]:
-                    quest_draft.image_url = result["image_url"]
-                    workflow_stage = result["next_step"]
-                
-            elif tool_name == "collect_location":
-                result = collect_location.invoke(tool_args)
-                if result["success"]:
-                    quest_draft.location_lat = result["latitude"]
-                    quest_draft.location_lng = result["longitude"]
-                    workflow_stage = result["next_step"]
-                
-            elif tool_name == "analyze_waste_image":
-                # Inject AI service dependency
-                result = await analyze_waste_image.ainvoke({
-                    "image_url": quest_draft.image_url,
-                    "ai_service": ai_service
-                })
-                if result["success"]:
-                    quest_draft.description = result["description"]
-                    quest_draft.waste_type = result["waste_type"]
-                    quest_draft.severity = result["severity"]
-                    quest_draft.confidence_score = result["confidence_score"]
-                    quest_draft.bounty_points = result["bounty_points"]
-                    workflow_stage = result["next_step"]
-                
-            elif tool_name == "create_quest_in_database":
-                # Mark as confirmed if user approved
-                quest_draft.user_confirmed = True
-                
-                # Inject dependencies
-                result = await create_quest_in_database.ainvoke({
-                    "quest_draft": quest_draft,
-                    "user": user,
-                    "session": session
-                })
-                if result["success"]:
-                    workflow_stage = result["next_step"]
-                    # Reset draft after successful creation
-                    quest_draft = QuestDraft()
-                
-            elif tool_name == "get_my_quests":
-                # Inject user_id and session
-                result = await get_my_quests.ainvoke({
-                    "user_id": str(state["user_id"]),
-                    "session": session,
-                    **tool_args
-                })
-                
-            elif tool_name == "get_my_transactions":
-                # Inject user_id and session
-                result = await get_my_transactions.ainvoke({
-                    "user_id": str(state["user_id"]),
-                    "session": session,
-                    **tool_args
-                })
-                
-            elif tool_name == "get_quest_statistics":
-                # Inject user_id and session
-                result = await get_quest_statistics.ainvoke({
-                    "user_id": str(state["user_id"]),
-                    "session": session
-                })
-                
-            elif tool_name == "search_waste_information":
-                result = await search_waste_information.ainvoke(tool_args)
-                
-            elif tool_name == "check_relevance":
-                result = check_relevance.invoke(tool_args)
-                
-            else:
-                result = {"error": f"Unknown tool: {tool_name}"}
-            
-            # Create tool message
-            tool_message = ToolMessage(
-                content=str(result),
-                tool_call_id=tool_id,
-                name=tool_name
+            ai_service = get_ai_service()
+            classification = await ai_service.classify_waste(
+                image_url=quest_draft.image_url,
+                additional_context=None
             )
-            tool_responses.append(tool_message)
+            
+            # Generate description from detected items
+            items_str = ", ".join(classification.detected_items[:3])
+            description = f"{classification.estimated_volume} of {items_str}"
+            if len(classification.detected_items) > 3:
+                description += f" and {len(classification.detected_items) - 3} more items"
+            
+            # Calculate bounty points based on waste type
+            waste_type = classification.waste_type.value
+            bounty_map = {"organic": 20, "recyclable": 50, "general": 30, "e_waste": 100}
+            bounty_points = bounty_map.get(waste_type, 30)
+            
+            # Update quest draft
+            quest_draft.description = description
+            quest_draft.waste_type = waste_type
+            quest_draft.severity = classification.severity.value
+            quest_draft.confidence_score = classification.confidence_score
+            quest_draft.bounty_points = bounty_points
+            workflow_stage = "awaiting_confirmation"
+            
+            # Create preview message
+            preview = f"""
+**Quest Preview:**
+📸 **Description:** {description}
+🗑️ **Waste Type:** {classification.waste_type.value.replace('_', ' ').title()}
+⚠️ **Severity:** {classification.severity.value.title()}
+💰 **Bounty Points:** {bounty_points}
+🎯 **AI Confidence:** {classification.confidence_score:.1%}
+
+Does this look correct? Please say 'yes' or 'confirm' to create the quest, or 'no' to start over.
+"""
+            
+            tool_responses.append(AIMessage(content=preview))
             
         except Exception as e:
-            # Handle tool execution errors
-            error_message = ToolMessage(
-                content=f"Error executing {tool_name}: {str(e)}",
-                tool_call_id=tool_id,
-                name=tool_name
-            )
-            tool_responses.append(error_message)
+            error_msg = f"Failed to analyze image: {str(e)}. Please try again with a different image."
+            tool_responses.append(AIMessage(content=error_msg))
+            workflow_stage = "awaiting_image"
+            quest_draft = QuestDraft()
+    
+    # Check if user confirmed the quest
+    elif workflow_stage == "awaiting_confirmation" and quest_draft.description:
+        last_msg = state["messages"][-1].content.lower() if state["messages"] else ""
+        
+        if any(word in last_msg for word in ["yes", "confirm", "ok", "correct", "proceed"]):
+            # User confirmed - create the quest
+            try:
+                import pygeohash
+                from geoalchemy2.shape import from_shape
+                from shapely.geometry import Point
+                from app.models.quest import Quest, WasteType, Severity, QuestStatus
+                
+                # Calculate geohash
+                geohash = pygeohash.encode(
+                    quest_draft.location_lat,
+                    quest_draft.location_lng,
+                    precision=8
+                )
+                ward_geohash = geohash[:5]
+                
+                # Create Point geometry
+                point = Point(quest_draft.location_lng, quest_draft.location_lat)
+                location_geom = from_shape(point, srid=4326)
+                
+                # Generate title
+                title = quest_draft.description[:100] + "..." if len(quest_draft.description) > 100 else quest_draft.description
+                
+                # Create Quest
+                new_quest = Quest(
+                    reporter_id=user.id,
+                    title=title,
+                    description=quest_draft.description,
+                    location=location_geom,
+                    geohash=geohash,
+                    ward_geohash=ward_geohash,
+                    waste_type=WasteType(quest_draft.waste_type),
+                    severity=Severity(quest_draft.severity),
+                    status=QuestStatus.REPORTED,
+                    bounty_points=quest_draft.bounty_points,
+                    image_url=quest_draft.image_url,
+                    ai_verification_score=quest_draft.confidence_score
+                )
+                
+                session.add(new_quest)
+                await session.commit()
+                await session.refresh(new_quest)
+                
+                success_msg = f"✅ Quest created successfully!\n\n**Quest ID:** {new_quest.id}\n**Bounty Points:** {quest_draft.bounty_points}\n\nYour quest has been reported and is now available for collectors to accept. You'll be notified when a collector starts working on it!"
+                tool_responses.append(AIMessage(content=success_msg))
+                
+                # Reset draft and workflow
+                quest_draft = QuestDraft()
+                workflow_stage = "idle"
+                
+            except Exception as e:
+                error_msg = f"Failed to create quest: {str(e)}. Please try again."
+                tool_responses.append(AIMessage(content=error_msg))
+                workflow_stage = "awaiting_confirmation"
+                
+        elif any(word in last_msg for word in ["no", "cancel", "restart", "wrong"]):
+            # User wants to restart
+            quest_draft = QuestDraft()
+            workflow_stage = "idle"
+            tool_responses.append(AIMessage(content="No problem! Let's start over. What would you like to do?"))
+    
+    # Handle tool calls from LLM
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        for tool_call in last_message.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id = tool_call["id"]
+            
+            try:
+                # Execute simple tools
+                if tool_name == "collect_image_url":
+                    result = collect_image_url.invoke(tool_args)
+                    if result["success"]:
+                        quest_draft.image_url = result["image_url"]
+                        workflow_stage = result["next_step"]
+                    
+                elif tool_name == "collect_location":
+                    result = collect_location.invoke(tool_args)
+                    if result["success"]:
+                        quest_draft.location_lat = result["latitude"]
+                        quest_draft.location_lng = result["longitude"]
+                        workflow_stage = result["next_step"]
+                    
+                elif tool_name == "search_waste_information":
+                    result = await search_waste_information.ainvoke(tool_args)
+                    
+                elif tool_name == "check_relevance":
+                    result = check_relevance.invoke(tool_args)
+                    
+                else:
+                    result = {"error": f"Unknown tool: {tool_name}"}
+                
+                # Create tool message
+                tool_message = ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+                tool_responses.append(tool_message)
+                
+            except Exception as e:
+                # Handle tool execution errors
+                error_message = ToolMessage(
+                    content=f"Error executing {tool_name}: {str(e)}",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+                tool_responses.append(error_message)
     
     return {
         "messages": tool_responses,
@@ -327,8 +391,9 @@ def should_continue(state: AgentState) -> Literal["tools", "end"]:
     Routing logic to decide next step.
     
     Continues to tools if:
-    1. Last message has tool calls
-    2. Tool call count is below max limit
+    1. Last message has tool calls, OR
+    2. Workflow stage requires automatic action (analyzing_image, awaiting_confirmation with user input)
+    3. Tool call count is below max limit
     
     Otherwise, ends the conversation turn.
     
@@ -341,6 +406,20 @@ def should_continue(state: AgentState) -> Literal["tools", "end"]:
     # Check tool call limit
     if state.get("tool_call_count", 0) >= state.get("max_tool_calls", 15):
         return "end"
+    
+    # Check if workflow stage requires automatic action
+    workflow_stage = state.get("workflow_stage", "idle")
+    if workflow_stage == "analyzing_image":
+        # Need to analyze image automatically
+        return "tools"
+    
+    if workflow_stage == "awaiting_confirmation" and state.get("quest_draft"):
+        # Check if last message might be a confirmation
+        if state["messages"]:
+            last_msg = state["messages"][-1].content.lower()
+            confirmation_words = ["yes", "confirm", "ok", "correct", "proceed", "no", "cancel", "restart"]
+            if any(word in last_msg for word in confirmation_words):
+                return "tools"
     
     # Check if last message has tool calls
     last_message = state["messages"][-1]
