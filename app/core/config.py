@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # Google Gemini API
     GOOGLE_API_KEY: str
 
+    # Sightengine API (Image Fraud Detection)
+    SIGHTENGINE_API_USER: str = ""
+    SIGHTENGINE_API_SECRET: str = ""
+
+    # SerpAPI (Reverse Image Search)
+    SERPAPI_KEY: str = ""
+
     # File Upload
     MAX_UPLOAD_SIZE: int
     ALLOWED_EXTENSIONS: List[str]

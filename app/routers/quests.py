@@ -31,6 +31,7 @@ from app.services.routing_service import get_routing_service
 from app.services.assignment_service import get_assignment_service
 from app.services.fraud_detection_service import get_fraud_detection_service
 from app.services.notification_service import get_notification_service
+from app.services.image_fraud_detection_service import get_image_fraud_detection_service
 from app.utils.exif_extraction import compare_metadata
 from app.routers.admin_review import auto_flag_low_confidence_quest
 
@@ -657,12 +658,41 @@ async def analyze_image(
     - Severity assessment
     - Confidence score
 
+    PLUS fraud detection:
+    - Detects AI-generated images using Sightengine
+    - Detects web-downloaded images using Google Cloud Vision
+
     Note: Deterministic values like bounty points are calculated on the backend
     using the bounty_map, not extracted from AI.
     """
     ai_service = get_ai_service()
+    fraud_service = get_image_fraud_detection_service()
 
     try:
+        # ✅ NEW FEATURE: IMAGE FRAUD DETECTION
+        # Check if image is AI-generated or downloaded from web
+        fraud_result = await fraud_service.check_image_fraud(request.image_url)
+
+        # Block if fraud detected with high confidence
+        if fraud_result.should_block:
+            fraud_type_message = {
+                "ai_generated": "This image appears to be AI-generated",
+                "web_image": "This image appears to be downloaded from the internet",
+                "both": "This image appears to be both AI-generated and downloaded from the internet"
+            }.get(fraud_result.fraud_type, "This image appears fraudulent")
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "Image fraud detected",
+                    "fraud_type": fraud_result.fraud_type,
+                    "message": fraud_type_message,
+                    "confidence_score": fraud_result.confidence_score,
+                    "detailed_reason": fraud_result.detailed_reason,
+                    "web_matches": fraud_result.web_detection_matches[:3] if fraud_result.web_detection_matches else None
+                }
+            )
+
         # Get AI classification using the existing classify_waste method
         classification = await ai_service.classify_waste(
             image_url=request.image_url,
@@ -683,6 +713,8 @@ async def analyze_image(
             confidence_score=classification.confidence_score
         )
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (including fraud detection)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

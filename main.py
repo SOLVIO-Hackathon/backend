@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, agent
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, agent, sentiment, bin_prediction
 
 
 @asynccontextmanager
@@ -26,6 +26,24 @@ async def lifespan(app: FastAPI):
         print("✅ Price prediction models loaded")
     except Exception as e:
         print(f"⚠️  Warning: Failed to load price prediction models: {e}")
+
+    # Load Bangla sentiment analysis model
+    try:
+        from app.services.sentiment_service import get_sentiment_analyzer
+        print("💬 Loading Bangla sentiment analysis model...")
+        get_sentiment_analyzer()
+        print("✅ Sentiment analysis model loaded")
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to load sentiment analysis model: {e}")
+    
+    # Load Bin fill prediction model
+    try:
+        from app.services.bin_prediction_service import get_bin_prediction_service
+        print("🗑️  Loading Bin fill prediction model...")
+        get_bin_prediction_service()
+        print("✅ Bin prediction model loaded")
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to load bin prediction model: {e}")
     
     yield
     # Shutdown
@@ -83,6 +101,8 @@ api_v1 = FastAPI(
         {"name": "Dashboard", "description": "Admin dashboard and analytics"},
         {"name": "AI Category", "description": "AI-powered e-waste image classification"},
         {"name": "E-Waste Price Prediction", "description": "ML-powered e-waste price estimation"},
+        {"name": "Sentiment Analysis", "description": "Bangla sentiment analysis for text"},
+        {"name": "Bin Fill Prediction", "description": "Time series forecasting for predicting bin fill-up time"},
     ],
     swagger_ui_parameters={
         "persistAuthorization": True,
@@ -146,6 +166,8 @@ api_v1.include_router(admin_review.router)
 api_v1.include_router(dashboard.router)
 api_v1.include_router(ai_category.router)
 api_v1.include_router(price_prediction.router)
+api_v1.include_router(sentiment.router)
+api_v1.include_router(bin_prediction.router)
 
 # Mount v1 API at root level (so /docs works directly)
 app.mount("", api_v1)

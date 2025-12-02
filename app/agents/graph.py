@@ -201,28 +201,77 @@ async def agent_node(state: AgentState, session: AsyncSession, user: User) -> Di
 async def tools_node(state: AgentState, session: AsyncSession, user: User) -> Dict[str, Any]:
     """
     Tool execution node - executes tools requested by LLM or performs workflow actions.
-    
+
     This node:
     1. Handles workflow-based automatic actions (analyze image, create quest)
     2. Executes simple tools called by the LLM
     3. Updates workflow stage based on results
     4. Updates quest draft based on results
     5. Returns tool responses
-    
+
     Args:
         state: Current agent state
         session: Database session for database tools
         user: Authenticated user for authorization
-        
+
     Returns:
         Updated state dict
     """
+    import re
+
     tool_responses = []
     quest_draft = state.get("quest_draft") or QuestDraft()
     workflow_stage = state["workflow_stage"]
-    
+
+    # Auto-extract data from user messages
+    if state["messages"]:
+        last_msg = state["messages"][-1]
+        if hasattr(last_msg, "content"):
+            content = last_msg.content
+            content_lower = content.lower()
+
+            # Check if user wants to start reporting waste
+            if workflow_stage == "idle" and any(keyword in content_lower for keyword in ["report", "waste", "i want to", "found"]):
+                workflow_stage = "awaiting_image"
+                tool_responses.append(AIMessage(content="Great! To start a new waste cleanup quest, I'll need a picture of the waste. Can you please provide the image URL?"))
+
+            # Extract image URL if in awaiting_image stage
+            elif workflow_stage == "awaiting_image" and not quest_draft.image_url:
+                url_match = re.search(r'https?://[^\s<>"]+', content)
+                if url_match:
+                    image_url = url_match.group(0)
+                    quest_draft.image_url = image_url
+                    workflow_stage = "awaiting_location"
+                    tool_responses.append(AIMessage(content=f"Got it! Image received. Now I need the location coordinates (latitude and longitude)."))
+
+            # Extract location coordinates if in awaiting_location stage
+            elif workflow_stage == "awaiting_location" and not quest_draft.location_lat:
+                # Try to extract coordinates from various formats
+                # Format 1: [Location captured via GPS: 23.790720, 90.405645]
+                coord_match1 = re.search(r'Location.*?:\s*(-?\d+\.?\d*),\s*(-?\d+\.?\d*)', content, re.IGNORECASE)
+                # Format 2: lat: 23.790720, lng: 90.405645
+                coord_match2 = re.search(r'lat.*?:\s*(-?\d+\.?\d*)[,\s]+l(?:ng|on).*?:\s*(-?\d+\.?\d*)', content, re.IGNORECASE)
+                # Format 3: simple coordinates 23.790720, 90.405645
+                coord_match3 = re.search(r'(-?\d+\.?\d{4,}),\s*(-?\d+\.?\d{4,})', content)
+
+                coord_match = coord_match1 or coord_match2 or coord_match3
+
+                if coord_match:
+                    try:
+                        lat = float(coord_match.group(1))
+                        lng = float(coord_match.group(2))
+
+                        # Validate ranges
+                        if -90 <= lat <= 90 and -180 <= lng <= 180:
+                            quest_draft.location_lat = lat
+                            quest_draft.location_lng = lng
+                            workflow_stage = "analyzing_image"
+                            tool_responses.append(AIMessage(content=f"Perfect! Location received ({lat:.6f}, {lng:.6f}). Let me analyze the waste image..."))
+                    except ValueError:
+                        pass
+
     # Handle workflow-based automatic actions first
-    if workflow_stage == "analyzing_image" and quest_draft.image_url:
+    if workflow_stage == "analyzing_image" and quest_draft.image_url and quest_draft.location_lat:
         # Automatically analyze the image
         try:
             ai_service = get_ai_service()
@@ -389,43 +438,68 @@ Does this look correct? Please say 'yes' or 'confirm' to create the quest, or 'n
 def should_continue(state: AgentState) -> Literal["tools", "end"]:
     """
     Routing logic to decide next step.
-    
+
     Continues to tools if:
-    1. Last message has tool calls, OR
-    2. Workflow stage requires automatic action (analyzing_image, awaiting_confirmation with user input)
-    3. Tool call count is below max limit
-    
+    1. Last message has tool calls (from LLM), OR
+    2. Last message is from user (HumanMessage) and we need to extract/process data
+    3. Workflow stage requires automatic action (analyzing_image)
+
     Otherwise, ends the conversation turn.
-    
+
     Args:
         state: Current agent state
-        
+
     Returns:
         "tools" to continue to tools_node, "end" to finish
     """
+    from langchain_core.messages import HumanMessage
+
     # Check tool call limit
     if state.get("tool_call_count", 0) >= state.get("max_tool_calls", 15):
         return "end"
-    
-    # Check if workflow stage requires automatic action
-    workflow_stage = state.get("workflow_stage", "idle")
-    if workflow_stage == "analyzing_image":
-        # Need to analyze image automatically
-        return "tools"
-    
-    if workflow_stage == "awaiting_confirmation" and state.get("quest_draft"):
-        # Check if last message might be a confirmation
-        if state["messages"]:
-            last_msg = state["messages"][-1].content.lower()
-            confirmation_words = ["yes", "confirm", "ok", "correct", "proceed", "no", "cancel", "restart"]
-            if any(word in last_msg for word in confirmation_words):
-                return "tools"
-    
-    # Check if last message has tool calls
+
+    # Get last message
     last_message = state["messages"][-1]
+
+    # Check if last message has tool calls from LLM
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
-    
+
+    # Only process user messages (HumanMessage) for extraction
+    if isinstance(last_message, HumanMessage):
+        workflow_stage = state.get("workflow_stage", "idle")
+        content_lower = last_message.content.lower()
+
+        # Check if user wants to start a quest in idle state
+        if workflow_stage == "idle":
+            if any(keyword in content_lower for keyword in ["report", "waste", "i want to", "found", "cleanup", "quest"]):
+                return "tools"
+
+        # Extract data if waiting for image or location
+        elif workflow_stage == "awaiting_image":
+            # Check if message contains a URL
+            import re
+            if re.search(r'https?://', content_lower):
+                return "tools"
+
+        elif workflow_stage == "awaiting_location":
+            # Check if message contains coordinates
+            import re
+            if re.search(r'(-?\d+\.?\d+)[,\s]+(-?\d+\.?\d+)', content_lower):
+                return "tools"
+
+        elif workflow_stage == "awaiting_confirmation":
+            # Check for confirmation/rejection
+            if any(word in content_lower for word in ["yes", "confirm", "ok", "correct", "proceed", "no", "cancel", "restart"]):
+                return "tools"
+
+    # Auto-analyze image if we have both image and location
+    workflow_stage = state.get("workflow_stage", "idle")
+    if workflow_stage == "analyzing_image":
+        quest_draft = state.get("quest_draft")
+        if quest_draft and quest_draft.image_url and quest_draft.location_lat:
+            return "tools"
+
     return "end"
 
 
@@ -462,7 +536,7 @@ def create_agent_graph(session: AsyncSession, user: User) -> StateGraph:
     # Set entry point
     workflow.set_entry_point("agent")
     
-    # Add conditional edges
+    # Add conditional edges from agent
     workflow.add_conditional_edges(
         "agent",
         should_continue,
@@ -471,9 +545,10 @@ def create_agent_graph(session: AsyncSession, user: User) -> StateGraph:
             "end": END
         }
     )
-    
-    # Add edge from tools back to agent
-    workflow.add_edge("tools", "agent")
+
+    # Tools node ends directly - no loop back to agent
+    # This prevents infinite loops where tools_node adds a response and we're done
+    workflow.add_edge("tools", END)
     
     # Compile with memory checkpointer
     return workflow.compile(checkpointer=MemorySaver())
