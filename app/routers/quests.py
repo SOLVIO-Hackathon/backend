@@ -28,6 +28,9 @@ from app.utils.duplicate_detection import is_potential_duplicate
 from app.services.ai_service import get_ai_service
 from app.services.qr_service import get_qr_service
 from app.services.routing_service import get_routing_service
+from app.services.assignment_service import get_assignment_service
+from app.services.fraud_detection_service import get_fraud_detection_service
+from app.services.notification_service import get_notification_service
 from app.utils.exif_extraction import compare_metadata
 from app.routers.admin_review import auto_flag_low_confidence_quest
 
@@ -108,10 +111,6 @@ async def create_quest(
 
     # ✅ NEW FEATURE: AUTOMATIC ASSIGNMENT
     # Try to automatically assign the quest to the best available collector
-    from app.services.assignment_service import get_assignment_service
-    from app.services.notification_service import get_notification_service
-    from app.core.config import settings
-    
     if settings.AUTO_ASSIGNMENT_ENABLED:
         assignment_service = get_assignment_service()
         assigned_collector, assignment_msg = await assignment_service.assign_collector_to_quest(
@@ -124,19 +123,19 @@ async def create_quest(
             await notification_service.notify_quest_assigned(quest, assigned_collector, session)
             await session.commit()
             
-            # Return quest with assignment info
-            return {
-                **quest.__dict__,
-                "assignment_status": "assigned",
-                "message": assignment_msg
-            }
+            # Return quest with assignment info as proper dict
+            from app.schemas.quest import QuestResponse
+            quest_dict = QuestResponse.model_validate(quest).model_dump()
+            quest_dict["assignment_status"] = "assigned"
+            quest_dict["message"] = assignment_msg
+            return quest_dict
         else:
             # No collector found - quest stays in REPORTED status
-            return {
-                **quest.__dict__,
-                "assignment_status": "pending",
-                "message": assignment_msg
-            }
+            from app.schemas.quest import QuestResponse
+            quest_dict = QuestResponse.model_validate(quest).model_dump()
+            quest_dict["assignment_status"] = "pending"
+            quest_dict["message"] = assignment_msg
+            return quest_dict
     
     return quest
 
@@ -338,9 +337,6 @@ async def complete_quest(
 
     # ✅ NEW FEATURE: BEHAVIORAL FRAUD DETECTION
     # Analyze collector's behavior patterns to calculate fraud risk
-    from app.services.fraud_detection_service import get_fraud_detection_service
-    from app.services.notification_service import get_notification_service
-    
     fraud_service = get_fraud_detection_service()
     behavior_pattern = await fraud_service.analyze_collector_behavior(
         current_user.id, session
