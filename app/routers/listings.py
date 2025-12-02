@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+import pandas as pd
+from decimal import Decimal
 
 from app.core.database import get_async_session
 from app.core.auth import get_current_active_user, require_kabadiwala
@@ -17,7 +19,7 @@ from app.schemas.listing import (
     ListingList,
 )
 from app.services.ai_service import get_ai_service
-from app.services.external_price_prediction import get_external_price_prediction_service
+from app.services.price_prediction_service import get_predictor
 
 from pydantic import BaseModel, HttpUrl
 
@@ -140,24 +142,28 @@ async def create_listing(
                 listing_data.device_type.value, "Other"
             )
 
-            price_service = get_external_price_prediction_service()
-            predicted_price = await price_service.predict_price(
-                brand=listing_data.brand,
-                build_quality=listing_data.build_quality,
-                condition=condition_numeric,
-                expiry_years=listing_data.expiry_years,
-                original_price=float(listing_data.original_price),
-                product_type=product_type,
-                usage_pattern=listing_data.usage_pattern,
-                used_duration=listing_data.used_duration,
-                user_lifespan=listing_data.user_lifespan,
-            )
+            # Prepare input data for local ML model
+            input_df = pd.DataFrame([{
+                'Brand': listing_data.brand,
+                'Product_Type': product_type,
+                'Build_Quality': listing_data.build_quality,
+                'Condition': condition_numeric,
+                'Original_Price': float(listing_data.original_price),
+                'Usage_Pattern': listing_data.usage_pattern,
+                'Used_Duration': listing_data.used_duration,
+                'User_Lifespan': listing_data.user_lifespan,
+                'Expiry_Years': listing_data.expiry_years,
+            }])
 
-            if predicted_price is not None:
-                base_price = predicted_price
+            # Get local ML predictor and predict
+            predictor = get_predictor()
+            predictions = predictor.predict(input_df)
+            
+            if predictions and len(predictions) > 0:
+                base_price = Decimal(str(predictions[0]))
                 logger.info(f"Price prediction successful: base_price = {base_price}")
             else:
-                logger.warning("Price prediction API returned None")
+                logger.warning("Price prediction returned empty result")
 
         except Exception as e:
             logger.error(f"Price prediction failed: {e}")
