@@ -27,7 +27,7 @@ class NotificationService:
             title="New Quest Assigned!",
             message=f"You've been assigned a new cleanup quest: {quest.title}",
             related_quest_id=quest.id,
-            metadata={
+            extra_data={
                 "quest_bounty": quest.bounty_points,
                 "waste_type": quest.waste_type.value,
                 "severity": quest.severity.value,
@@ -46,7 +46,7 @@ class NotificationService:
             title="Quest Verified!",
             message=f"Your cleanup of '{quest.title}' has been verified. Bounty paid: {quest.bounty_points} BDT",
             related_quest_id=quest.id,
-            metadata={
+            extra_data={
                 "bounty_amount": quest.bounty_points,
                 "ai_score": quest.ai_verification_score,
             },
@@ -64,7 +64,7 @@ class NotificationService:
             title="Quest Rejected",
             message=f"Your cleanup of '{quest.title}' was rejected. Reason: {reason}",
             related_quest_id=quest.id,
-            metadata={"rejection_reason": reason},
+            extra_data={"rejection_reason": reason},
         )
         session.add(notification)
 
@@ -84,7 +84,7 @@ class NotificationService:
                 channel=NotificationChannel.IN_APP,
                 title="Fraud Alert",
                 message=f"User {user.full_name} has high fraud risk score: {fraud_score:.2f}",
-                metadata={"flagged_user_id": str(user.id), "fraud_score": fraud_score},
+                extra_data={"flagged_user_id": str(user.id), "fraud_score": fraud_score},
             )
             session.add(notification)
 

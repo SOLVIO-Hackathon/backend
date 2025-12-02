@@ -6,8 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications
 
 
 @asynccontextmanager
@@ -68,6 +67,8 @@ api_v1 = FastAPI(
     openapi_tags=[
         {"name": "Authentication", "description": "User registration and login"},
         {"name": "CleanQuests", "description": "Gamified waste cleanup missions"},
+        {"name": "Collectors", "description": "Collector availability and workload management"},
+        {"name": "Notifications", "description": "In-app notification system"},
         {"name": "FlashTrade", "description": "E-waste marketplace listings"},
         {"name": "FlashTrade - Bids", "description": "Bidding system for e-waste"},
         {"name": "Reputation & Badges", "description": "Badge award system and achievements"},
@@ -128,6 +129,8 @@ api_v1.openapi = custom_openapi
 api_v1.include_router(health.router)
 api_v1.include_router(auth.router)
 api_v1.include_router(quests.router)
+api_v1.include_router(collectors.router)
+api_v1.include_router(notifications.router)
 api_v1.include_router(listings.router)
 api_v1.include_router(bids.router)
 api_v1.include_router(badges.router)
