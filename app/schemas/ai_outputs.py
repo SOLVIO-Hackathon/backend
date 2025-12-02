@@ -217,3 +217,15 @@ class BeforeAfterComparisonOutput(BaseModel):
         if not 0.0 <= v <= 1.0:
             raise ValueError('Location match confidence must be between 0.0 and 1.0')
         return v
+
+
+class AICategoryPredictionResponse(BaseModel):
+    """Response model for AI category prediction endpoint"""
+    
+    predicted_label: str = Field(
+        description="The predicted e-waste category label"
+    )
+    
+    probabilities: dict[str, float] = Field(
+        description="Probability distribution across all category labels"
+    )

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category
 
 
 @asynccontextmanager
@@ -66,6 +66,7 @@ api_v1 = FastAPI(
         {"name": "Waste Disposal Routing", "description": "OpenStreetMap routing to disposal points"},
         {"name": "Admin Review", "description": "Human-in-the-loop review for flagged quests"},
         {"name": "Dashboard", "description": "Admin dashboard and analytics"},
+        {"name": "AI Category", "description": "AI-powered e-waste image classification"},
     ],
     swagger_ui_parameters={
         "persistAuthorization": True,
@@ -122,6 +123,7 @@ api_v1.include_router(upload.router)
 api_v1.include_router(disposal.router)
 api_v1.include_router(admin_review.router)
 api_v1.include_router(dashboard.router)
+api_v1.include_router(ai_category.router)
 
 # Mount v1 API at root level (so /docs works directly)
 app.mount("", api_v1)
