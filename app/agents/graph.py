@@ -141,15 +141,18 @@ async def agent_node(state: AgentState, session: AsyncSession, user: User) -> Di
         temperature=0.3,  # Balance between consistency and creativity
     )
     
-    # Get simple tools that don't need dependency injection
-    # Complex tools (analyze_waste_image, create_quest_in_database) are handled in tools_node
+    # Get all tools including database tools
+    # Database tools will have dependencies injected in tools_node
     tools = [
         collect_image_url,
         collect_location,
         search_waste_information,
         check_relevance,
+        get_my_quests,
+        get_my_transactions,
+        get_quest_statistics,
     ]
-    
+
     # Bind tools to LLM
     llm_with_tools = llm.bind_tools(tools)
     
@@ -404,10 +407,31 @@ Does this look correct? Please say 'yes' or 'confirm' to create the quest, or 'n
                     
                 elif tool_name == "search_waste_information":
                     result = await search_waste_information.ainvoke(tool_args)
-                    
+
                 elif tool_name == "check_relevance":
                     result = check_relevance.invoke(tool_args)
-                    
+
+                # Database tools - inject user_id and session
+                elif tool_name == "get_my_quests":
+                    result = await get_my_quests.ainvoke({
+                        "user_id": str(user.id),
+                        "session": session,
+                        **tool_args
+                    })
+
+                elif tool_name == "get_my_transactions":
+                    result = await get_my_transactions.ainvoke({
+                        "user_id": str(user.id),
+                        "session": session,
+                        **tool_args
+                    })
+
+                elif tool_name == "get_quest_statistics":
+                    result = await get_quest_statistics.ainvoke({
+                        "user_id": str(user.id),
+                        "session": session
+                    })
+
                 else:
                     result = {"error": f"Unknown tool: {tool_name}"}
                 
@@ -546,9 +570,9 @@ def create_agent_graph(session: AsyncSession, user: User) -> StateGraph:
         }
     )
 
-    # Tools node ends directly - no loop back to agent
-    # This prevents infinite loops where tools_node adds a response and we're done
-    workflow.add_edge("tools", END)
+    # CRITICAL: Tools node loops back to agent for multi-turn conversations
+    # This enables the ReAct loop: agent -> tools -> agent -> tools -> ... -> end
+    workflow.add_edge("tools", "agent")
     
     # Compile with memory checkpointer
     return workflow.compile(checkpointer=MemorySaver())
