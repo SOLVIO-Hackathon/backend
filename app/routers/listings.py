@@ -109,7 +109,7 @@ async def create_listing(
         estimated_max = 1500.0
         ai_classification = {"error": str(e)}
 
-    # Call external price prediction API if user provided required fields
+    # Use local ML model for price prediction if user provided required fields
     if all([
         listing_data.brand,
         listing_data.build_quality is not None,
