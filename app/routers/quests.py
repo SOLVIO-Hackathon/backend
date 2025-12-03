@@ -345,7 +345,7 @@ async def complete_quest(
     
     # Get dynamic AI threshold based on fraud risk
     dynamic_threshold = fraud_service.get_dynamic_ai_threshold(
-        current_user.fraud_risk_score
+        current_user.fraud_risk_score if current_user.fraud_risk_score is not None else 0.0
     )
 
     # ✅ FEATURE 2: AI VERIFICATION WORKFLOW
@@ -370,11 +370,11 @@ async def complete_quest(
             metadata_comparison=metadata_check
         )
 
-        quest.ai_verification_score = verification_result.confidence_score
-        quest.verification_notes = f"AI: {verification_result.verification_decision}\n{verification_result.detailed_analysis}"
+        quest.ai_verification_score = verification_result.verification_score
+        quest.verification_notes = f"AI: {'PASSED' if verification_result.verification_passed else 'FAILED'}\n{verification_result.cleanup_quality_notes}"
 
         # Auto-approve if confidence meets DYNAMIC threshold (not static)
-        if verification_result.confidence_score >= dynamic_threshold:
+        if verification_result.verification_score >= dynamic_threshold:
             quest.status = QuestStatus.VERIFIED
             quest.verified_at = datetime.utcnow()
 
@@ -404,23 +404,26 @@ async def complete_quest(
         else:
             # ✅ FEATURE 2: AUTO-FLAG LOW CONFIDENCE FOR ADMIN REVIEW
             # Low confidence - automatically flag for admin review
-            ai_notes = f"Verification Decision: {verification_result.verification_decision}\n"
-            ai_notes += f"Detailed Analysis: {verification_result.detailed_analysis}\n"
-            ai_notes += f"Dynamic Threshold: {dynamic_threshold:.2f} (Fraud Risk: {current_user.fraud_risk_score:.2f})\n"
+            ai_notes = f"Verification Decision: {'PASSED' if verification_result.verification_passed else 'FAILED'}\n"
+            ai_notes += f"Cleanup Quality: {verification_result.cleanup_quality_notes}\n"
+            ai_notes += f"Waste Removed: {verification_result.waste_removed_percentage}%\n"
+            fraud_risk = current_user.fraud_risk_score if current_user.fraud_risk_score is not None else 0.0
+            ai_notes += f"Dynamic Threshold: {dynamic_threshold:.2f} (Fraud Risk: {fraud_risk:.2f})\n"
             ai_notes += f"Behavioral Analysis: {behavior_pattern.fraud_flags}\n"
             if verification_result.fraud_indicators:
                 ai_notes += f"Fraud Indicators: {', '.join(verification_result.fraud_indicators)}"
 
             admin_review = await auto_flag_low_confidence_quest(
                 quest_id=quest.id,
-                confidence_score=verification_result.confidence_score,
+                confidence_score=verification_result.verification_score,
                 ai_notes=ai_notes,
                 session=session
             )
             
             # ✅ NEW: Alert admins if very high fraud risk
             notification_service = get_notification_service()
-            if current_user.fraud_risk_score >= settings.FRAUD_HIGH_RISK_THRESHOLD:
+            fraud_risk = current_user.fraud_risk_score if current_user.fraud_risk_score is not None else 0.0
+            if fraud_risk >= settings.FRAUD_HIGH_RISK_THRESHOLD:
                 await notification_service.notify_fraud_alert(
                     current_user, current_user.fraud_risk_score, session
                 )
@@ -429,6 +432,7 @@ async def complete_quest(
 
     except Exception as e:
         quest.verification_notes = f"AI verification failed: {str(e)}"
+        quest.ai_verification_score = 0.0  # Set to 0 to indicate failure
 
         # ✅ FEATURE 2: AUTO-FLAG FAILED VERIFICATION FOR ADMIN REVIEW
         # AI verification failed - flag for manual admin review
@@ -499,25 +503,37 @@ async def complete_quest(
             })
 
     await session.commit()
-    await session.refresh(quest)
+
+    # Reload quest with eagerly loaded relationships to avoid lazy loading issues
+    from app.schemas.quest import QuestResponse
+    result = await session.execute(
+        select(Quest).options(
+            selectinload(Quest.reporter),
+            selectinload(Quest.collector)
+        ).where(Quest.id == quest_id)
+    )
+    quest = result.scalar_one()
+
+    # Convert quest to dict using Pydantic schema
+    quest_data = QuestResponse.model_validate(quest).model_dump()
 
     return {
-        "quest": quest,
+        "quest": quest_data,
         "verification": {
-            "status": quest.status.value,
-            "confidence_score": quest.ai_verification_score,
+            "status": quest.status.value if quest.status else "unknown",
+            "confidence_score": quest.ai_verification_score or 0.0,
             "dynamic_threshold": dynamic_threshold,
-            "fraud_risk_score": current_user.fraud_risk_score,
+            "fraud_risk_score": current_user.fraud_risk_score if current_user.fraud_risk_score is not None else 0.0,
             "message": verification_message,
-            "metadata_check": metadata_check,
+            "metadata_check": metadata_check or {},
             "behavioral_analysis": {
-                "risk_score": behavior_pattern.calculated_risk_score,
-                "fraud_flags": behavior_pattern.fraud_flags,
-                "quests_analyzed": behavior_pattern.quests_completed_count
+                "risk_score": behavior_pattern.calculated_risk_score if behavior_pattern.calculated_risk_score is not None else 0.0,
+                "fraud_flags": behavior_pattern.fraud_flags or {},
+                "quests_analyzed": behavior_pattern.quests_completed_count or 0
             }
         },
         "disposal_routing": {
-            "message": f"Found {len(nearest_disposal_points)} nearby disposal points for {quest.waste_type.value} waste",
+            "message": f"Found {len(nearest_disposal_points)} nearby disposal points for {quest.waste_type.value if quest.waste_type else 'unknown'} waste",
             "nearest_points": nearest_disposal_points
         }
     }

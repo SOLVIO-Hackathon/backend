@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgis/postgis:16-3.5
-    container_name: zerobin_db
+    container_name: postgres
     ports:
       - "5433:5432"
     environment:
