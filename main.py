@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, sentiment, bin_prediction, agent, complaints
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, agent, complaints
 
 
 @asynccontextmanager
@@ -170,8 +170,6 @@ api_v1.include_router(admin_review.router)
 api_v1.include_router(dashboard.router)
 api_v1.include_router(ai_category.router)
 api_v1.include_router(price_prediction.router)
-api_v1.include_router(sentiment.router)
-api_v1.include_router(bin_prediction.router)
 api_v1.include_router(complaints.router)
 
 # Mount v1 API at root level (so /docs works directly)
