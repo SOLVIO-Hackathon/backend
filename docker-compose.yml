@@ -12,10 +12,11 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   app:
-    image: abrareyasir/solvio:2
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile
+    image: abrareyasir/solvio:3
     container_name: zerobin_app
     ports:
       - "8000:8000"
