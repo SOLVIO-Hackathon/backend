@@ -12,6 +12,7 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   app:
+    image: abrareyasir/solvio:2
     build:
       context: .
       dockerfile: Dockerfile
