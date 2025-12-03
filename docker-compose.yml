@@ -11,5 +11,23 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zerobin_app
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      LOG_LEVEL: info
+      UVICORN_WORKERS: 1
+      APP_MODULE: main:app
+    depends_on:
+      - postgres
+    volumes:
+      - .:/app
+
 volumes:
   pgdata:

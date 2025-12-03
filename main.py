@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import init_db
 from app.routers import auth, quests, listings, bids, dashboard, health, payments
-from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, sentiment, bin_prediction, agent
+from app.routers import chat, admin_review, disposal, upload, payouts, ai_category, price_prediction, badges, ratings, collectors, notifications, sentiment, bin_prediction, agent, complaints
 
 
 @asynccontextmanager
@@ -14,8 +14,12 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler"""
     # Startup
     print("Starting Zerobin API...")
-    # Uncomment to auto-create tables (use Alembic in production)
-    # await init_db()
+    # Auto-create tables for dev (use Alembic in production)
+    try:
+        await init_db()
+        print("Database tables ensured (init_db)")
+    except Exception as e:
+        print(f"Warning: Failed to init_db: {e}")
     print("Database connected")
 
     # Load E-Waste price prediction models
@@ -168,6 +172,7 @@ api_v1.include_router(ai_category.router)
 api_v1.include_router(price_prediction.router)
 api_v1.include_router(sentiment.router)
 api_v1.include_router(bin_prediction.router)
+api_v1.include_router(complaints.router)
 
 # Mount v1 API at root level (so /docs works directly)
 app.mount("", api_v1)

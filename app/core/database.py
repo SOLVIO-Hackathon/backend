@@ -72,6 +72,8 @@ async def init_db():
             User, Quest, Listing, Bid, Transaction, Badge,
             Chat, ChatMessage, AdminReview, DisposalPoint, Payout
         )
+        # Import Complaint model to register metadata
+        from app.models.complaint import Complaint  # noqa: F401
 
         # Create all tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)

@@ -28,7 +28,9 @@ WORKDIR /app
 FROM base AS deps
 
 # Copy only dependency manifests for better caching
+# Copy dependency manifests and README.md for build backend
 COPY pyproject.toml ./
+COPY README.md ./
 # Copy optional lockfile if present; build won't fail if missing
 COPY uv.lock* ./
 COPY requirements.txt* ./
@@ -36,7 +38,7 @@ COPY requirements.txt* ./
 # Prefer pyproject with uv sync; fall back to requirements if needed
 RUN set -eux; \
 	if [ -f pyproject.toml ]; then \
-		/root/.local/bin/uv sync --frozen --no-dev --system; \
+		/root/.local/bin/uv sync --frozen --no-dev; \
 	elif [ -f requirements.txt ]; then \
 		/root/.local/bin/uv pip install --system -r requirements.txt; \
 	else \
