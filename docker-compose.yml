@@ -16,7 +16,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: abrareyasir/solvio:3
+    image: abrareyasir/solvio:5
     container_name: zerobin_app
     ports:
       - "8000:8000"
