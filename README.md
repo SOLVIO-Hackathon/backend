@@ -1,8 +1,7 @@
 # Zerobin Backend API
 
 FastAPI backend for the Zerobin waste management platform with gamified cleanup quests and e-waste marketplace.
-![Uploading image.png…]()
-
+<img width="1482" height="964" alt="image" src="https://github.com/user-attachments/assets/9e81064a-441a-4d94-ba6b-55cfa2098f94" />
 
 ## Features
 
